@@ -71,6 +71,11 @@ def process_one_job() -> dict[str, Any] | None:
                 draft_subject=latest_run.get("draft_subject", ""),
                 draft_body=latest_run.get("draft_body", ""),
             )
+            if not _notification_delivered(telegram_result):
+                raise RuntimeError(
+                    "Approval required, but owner Telegram notification failed: "
+                    f"{telegram_result}"
+                )
             mark_lead_job_waiting_approval(job_id)
         else:
             completion_status = _completion_status_from_policy(send_policy)
@@ -93,7 +98,11 @@ def process_one_job() -> dict[str, Any] | None:
                     lead_id=lead_id,
                     approval_status=completion_status,
                 )
-                mark_lead_job_completed(job_id, completion_status)
+                mark_lead_job_completed(
+                    job_id,
+                    completion_status,
+                    first_response=completion_status == "auto_sent",
+                )
             else:
                 mark_lead_job_succeeded(job_id)
 
@@ -193,6 +202,14 @@ def _owner_summary_from_policy(
             f"send_policy={policy}. Reason: {reason}"
         )
     return base
+
+
+def _notification_delivered(result: dict[str, Any] | None) -> bool:
+    if not result:
+        return False
+    if result.get("configured") is False:
+        return False
+    return result.get("ok") is not False
 
 
 def main() -> int:

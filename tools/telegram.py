@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import json
 from typing import Any
-from urllib.error import HTTPError
 from urllib.parse import urlencode
-from urllib.request import Request, urlopen
+from urllib.request import Request
 
 from config import PUBLIC_BASE_URL, TELEGRAM_BOT_TOKEN, TELEGRAM_OWNER_CHAT_ID
+from tools.http_client import request_json_with_retries
 
 
 def telegram_is_configured() -> bool:
@@ -19,14 +19,11 @@ def _telegram_request(method: str, payload: dict[str, Any]) -> dict[str, Any]:
     request = Request(url, data=data, method="POST")
 
     try:
-        with urlopen(request, timeout=20) as response:
-            return json.loads(response.read().decode("utf-8"))
-    except HTTPError as exc:
-        body = exc.read().decode("utf-8", errors="replace")
+        return request_json_with_retries(request, timeout=20)
+    except RuntimeError as exc:
         return {
             "ok": False,
-            "status_code": exc.code,
-            "telegram_error": body,
+            "telegram_error": str(exc),
         }
 
 

@@ -1,12 +1,21 @@
 from __future__ import annotations
 
+from collections import defaultdict, deque
+from time import monotonic
 from typing import Any
 from uuid import uuid4
 
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi.responses import JSONResponse
 from langgraph.errors import GraphInterrupt
 
-from config import TELEGRAM_WEBHOOK_SECRET, WEBHOOK_SHARED_SECRET
+from config import (
+    MAX_WEBHOOK_BODY_BYTES,
+    RATE_LIMIT_REQUESTS,
+    RATE_LIMIT_WINDOW_SECONDS,
+    TELEGRAM_WEBHOOK_SECRET,
+    WEBHOOK_SHARED_SECRET,
+)
 from langgraph.types import Command
 from tools.airtable_client import (
     airtable_is_configured,
@@ -32,6 +41,33 @@ from tools.telegram import (
 
 
 app = FastAPI(title="Lead Intake Agent API")
+_rate_limit_windows: dict[str, deque[float]] = defaultdict(deque)
+
+
+@app.middleware("http")
+async def request_guardrails(request: Request, call_next):
+    if request.method == "POST" and _is_guarded_path(request.url.path):
+        content_length = request.headers.get("content-length")
+        if (
+            content_length
+            and _safe_int(content_length) > MAX_WEBHOOK_BODY_BYTES
+        ):
+            return JSONResponse(
+                status_code=413,
+                content={
+                    "detail": (
+                        f"Request body too large. Limit is {MAX_WEBHOOK_BODY_BYTES} bytes."
+                    )
+                },
+            )
+
+        if _is_rate_limited(request):
+            return JSONResponse(
+                status_code=429,
+                content={"detail": "Too many requests. Try again shortly."},
+            )
+
+    return await call_next(request)
 
 
 @app.get("/health")
@@ -301,6 +337,40 @@ def _sanitize_lead_value(value: Any, limit: int) -> str:
 def _require_management_secret(secret: str | None) -> None:
     if not WEBHOOK_SHARED_SECRET or secret != WEBHOOK_SHARED_SECRET:
         raise HTTPException(status_code=401, detail="Unauthorized")
+
+
+def _is_guarded_path(path: str) -> bool:
+    return (
+        path == "/webhooks/tally"
+        or path == "/telegram/webhook"
+        or path.startswith("/approval/")
+    )
+
+
+def _is_rate_limited(request: Request) -> bool:
+    if RATE_LIMIT_REQUESTS <= 0 or RATE_LIMIT_WINDOW_SECONDS <= 0:
+        return False
+
+    client_host = request.client.host if request.client else "unknown"
+    key = f"{client_host}:{request.url.path}"
+    now = monotonic()
+    window = _rate_limit_windows[key]
+
+    while window and now - window[0] > RATE_LIMIT_WINDOW_SECONDS:
+        window.popleft()
+
+    if len(window) >= RATE_LIMIT_REQUESTS:
+        return True
+
+    window.append(now)
+    return False
+
+
+def _safe_int(value: str) -> int:
+    try:
+        return int(value)
+    except ValueError:
+        return 0
 
 
 def _latest_agent_run_fields(lead_id: str) -> dict[str, Any]:

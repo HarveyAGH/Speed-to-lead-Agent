@@ -32,6 +32,12 @@ CREATE INDEX IF NOT EXISTS idx_lead_jobs_status_created
 ON lead_jobs (status, created_at);
 """
 
+JOB_METRICS_SQL = [
+    "ALTER TABLE lead_jobs ADD COLUMN IF NOT EXISTS owner_notified_at TIMESTAMPTZ;",
+    "ALTER TABLE lead_jobs ADD COLUMN IF NOT EXISTS first_response_at TIMESTAMPTZ;",
+    "ALTER TABLE lead_jobs ADD COLUMN IF NOT EXISTS first_response_status TEXT;",
+]
+
 
 def queue_is_configured() -> bool:
     return bool(POSTGRES_DB_URI)
@@ -41,6 +47,8 @@ def setup_job_queue() -> None:
     with _connect() as conn:
         conn.execute(JOB_TABLE_SQL)
         conn.execute(JOB_INDEX_SQL)
+        for statement in JOB_METRICS_SQL:
+            conn.execute(statement)
 
 
 def enqueue_lead_job(lead_id: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -123,7 +131,12 @@ def mark_lead_job_succeeded(job_id: int) -> dict[str, Any]:
     return mark_lead_job_completed(job_id, "succeeded")
 
 
-def mark_lead_job_completed(job_id: int, status: str) -> dict[str, Any]:
+def mark_lead_job_completed(
+    job_id: int,
+    status: str,
+    *,
+    first_response: bool = False,
+) -> dict[str, Any]:
     with _connect() as conn:
         row = conn.execute(
             """
@@ -131,11 +144,19 @@ def mark_lead_job_completed(job_id: int, status: str) -> dict[str, Any]:
             SET status = %s,
                 finished_at = now(),
                 updated_at = now(),
-                last_error = NULL
+                last_error = NULL,
+                first_response_at = CASE
+                    WHEN %s THEN COALESCE(first_response_at, now())
+                    ELSE first_response_at
+                END,
+                first_response_status = CASE
+                    WHEN %s THEN %s
+                    ELSE first_response_status
+                END
             WHERE id = %s
-            RETURNING id, lead_id, status, attempts, finished_at;
+            RETURNING id, lead_id, status, attempts, finished_at, first_response_at, first_response_status;
             """,
-            (status, job_id),
+            (status, first_response, first_response, status, job_id),
         ).fetchone()
     return dict(row)
 
@@ -146,11 +167,11 @@ def mark_lead_job_waiting_approval(job_id: int) -> dict[str, Any]:
             """
             UPDATE lead_jobs
             SET status = 'waiting_approval',
-                finished_at = now(),
+                owner_notified_at = COALESCE(owner_notified_at, now()),
                 updated_at = now(),
                 last_error = NULL
             WHERE id = %s
-            RETURNING id, lead_id, status, attempts, finished_at;
+            RETURNING id, lead_id, status, attempts, owner_notified_at;
             """,
             (job_id,),
         ).fetchone()
@@ -165,7 +186,15 @@ def mark_latest_waiting_job_resolved(lead_id: str, status: str) -> dict[str, Any
             SET status = %s,
                 finished_at = now(),
                 updated_at = now(),
-                last_error = NULL
+                last_error = NULL,
+                first_response_at = CASE
+                    WHEN %s THEN COALESCE(first_response_at, now())
+                    ELSE first_response_at
+                END,
+                first_response_status = CASE
+                    WHEN %s THEN %s
+                    ELSE first_response_status
+                END
             WHERE id = (
                 SELECT id
                 FROM lead_jobs
@@ -174,9 +203,15 @@ def mark_latest_waiting_job_resolved(lead_id: str, status: str) -> dict[str, Any
                 ORDER BY created_at DESC
                 LIMIT 1
             )
-            RETURNING id, lead_id, status, attempts, finished_at;
+            RETURNING id, lead_id, status, attempts, finished_at, first_response_at, first_response_status;
             """,
-            (status, lead_id),
+            (
+                status,
+                status == "approved_sent",
+                status == "approved_sent",
+                status,
+                lead_id,
+            ),
         ).fetchone()
 
     if not row:
@@ -240,7 +275,31 @@ def list_recent_jobs(limit: int = 10) -> list[dict[str, Any]]:
     with _connect() as conn:
         rows = conn.execute(
             """
-            SELECT id, lead_id, status, attempts, max_attempts, last_error, created_at, updated_at
+            SELECT
+                id,
+                lead_id,
+                status,
+                attempts,
+                max_attempts,
+                last_error,
+                created_at,
+                updated_at,
+                started_at,
+                owner_notified_at,
+                first_response_at,
+                first_response_status,
+                CASE
+                    WHEN started_at IS NULL THEN NULL
+                    ELSE EXTRACT(EPOCH FROM (started_at - created_at))::INTEGER
+                END AS queue_wait_seconds,
+                CASE
+                    WHEN owner_notified_at IS NULL THEN NULL
+                    ELSE EXTRACT(EPOCH FROM (owner_notified_at - created_at))::INTEGER
+                END AS owner_notification_seconds,
+                CASE
+                    WHEN first_response_at IS NULL THEN NULL
+                    ELSE EXTRACT(EPOCH FROM (first_response_at - created_at))::INTEGER
+                END AS first_response_seconds
             FROM lead_jobs
             ORDER BY created_at DESC
             LIMIT %s;

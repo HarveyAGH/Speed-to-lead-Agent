@@ -2,9 +2,8 @@ from __future__ import annotations
 
 import json
 from typing import Any
-from urllib.error import HTTPError
 from urllib.parse import quote, urlencode
-from urllib.request import Request, urlopen
+from urllib.request import Request
 
 from config import (
     AIRTABLE_AGENT_RUNS_TABLE,
@@ -12,6 +11,7 @@ from config import (
     AIRTABLE_BASE_ID,
     AIRTABLE_LEADS_TABLE,
 )
+from tools.http_client import request_json_with_retries
 
 
 def airtable_is_configured() -> bool:
@@ -35,11 +35,9 @@ def _request(method: str, table_name: str, payload: dict[str, Any] | None = None
     request = Request(url, data=data, method=method, headers=headers)
 
     try:
-        with urlopen(request, timeout=20) as response:
-            return json.loads(response.read().decode("utf-8"))
-    except HTTPError as exc:
-        body = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"Airtable API error {exc.code}: {body}") from exc
+        return request_json_with_retries(request, timeout=20)
+    except RuntimeError as exc:
+        raise RuntimeError(f"Airtable API request failed: {exc}") from exc
 
 
 def find_lead_by_id(lead_id: str) -> dict[str, Any] | None:
@@ -117,14 +115,14 @@ def _record_request(
     request = Request(url, data=data, method=method, headers=headers)
 
     try:
-        with urlopen(request, timeout=20) as response:
-            return json.loads(response.read().decode("utf-8"))
-    except HTTPError as exc:
-        body = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"Airtable API error {exc.code}: {body}") from exc
-def update_latest_agent_run_status(
+        return request_json_with_retries(request, timeout=20)
+    except RuntimeError as exc:
+        raise RuntimeError(f"Airtable API request failed: {exc}") from exc
+
+
+def update_latest_agent_run_fields(
     lead_id: str,
-    approval_status: str,
+    fields: dict[str, Any],
 ) -> dict[str, Any]:
     if not airtable_is_configured():
         return {"configured": False}
@@ -141,6 +139,15 @@ def update_latest_agent_run_status(
         "PATCH",
         AIRTABLE_AGENT_RUNS_TABLE,
         record["id"],
-        payload={"fields": {"approval_status": approval_status}},
+        payload={"fields": fields},
     )
 
+
+def update_latest_agent_run_status(
+    lead_id: str,
+    approval_status: str,
+) -> dict[str, Any]:
+    return update_latest_agent_run_fields(
+        lead_id=lead_id,
+        fields={"approval_status": approval_status},
+    )

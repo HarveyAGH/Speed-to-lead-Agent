@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app import normalize_lead_payload
+from app import _is_guarded_path, _safe_int, normalize_lead_payload
 
 
 def test_normalize_flat_lead_payload_sets_defaults():
@@ -65,3 +65,16 @@ def test_normalize_flat_payload_sanitizes_control_chars_and_truncates_message():
 
     assert lead["name"] == "Maya Chen"
     assert len(lead["message"]) == 2000
+
+
+def test_guarded_paths_are_limited_to_public_write_endpoints():
+    assert _is_guarded_path("/webhooks/tally") is True
+    assert _is_guarded_path("/telegram/webhook") is True
+    assert _is_guarded_path("/approval/lead_123/approve") is True
+    assert _is_guarded_path("/health") is False
+    assert _is_guarded_path("/jobs") is False
+
+
+def test_safe_int_falls_back_for_bad_content_length():
+    assert _safe_int("123") == 123
+    assert _safe_int("bad") == 0
