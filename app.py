@@ -416,31 +416,23 @@ def run_approval_workflow(lead_id: str) -> str:
 
 
 def run_approval_workflow_status(lead_id: str) -> dict[str, Any]:
-    from agents.common import structured_or_last_message
     from graph import graph
 
-    prompt = (
-        f"Run the lead intake workflow for {lead_id}. Qualify it, find missing info, "
-        "draft the reply, save the CRM note, save artifacts, and apply the risk-based "
-        "send policy from the saved decision. Request approval for risky responses, "
-        "do not send when policy says do_not_send, and leave safe auto-send responses "
-        "for the background worker after the graph completes."
-    )
     config = {
         "configurable": {
             "thread_id": f"lead-{lead_id}",
         },
         "run_name": f"lead-intake-{lead_id}",
-        "tags": ["webhook", "tally", "lead_intake"],
+        "tags": ["webhook", "tally", "lead_intake", "pipeline"],
         "metadata": {
             "lead_id": lead_id,
             "thread_id": f"lead-{lead_id}",
             "source": "tally",
-            "workflow": "lead_intake",
+            "workflow": "lead_intake_pipeline",
         },
     }
     result = graph.invoke(
-        {"messages": [{"role": "user", "content": prompt}]},
+        {"lead_id": lead_id},
         config=config,
     )
 
@@ -456,13 +448,13 @@ def run_approval_workflow_status(lead_id: str) -> dict[str, Any]:
 
     return {
         "status": "completed",
-        "summary": structured_or_last_message(result),
+        "summary": result.get("summary", "Workflow Completed."),
         "interrupt": None,
+        "state": result,
     }
 
 
 def resume_lead_send(lead_id: str, decision: str) -> dict[str, Any]:
-    from agents.common import structured_or_last_message
     from graph import graph
 
     config = {
@@ -484,5 +476,6 @@ def resume_lead_send(lead_id: str, decision: str) -> dict[str, Any]:
     return {
         "status": decision,
         "lead_id": lead_id,
-        "result": structured_or_last_message(result),
+        "result": result.get("summary", "Workflow resumed."),
+        "state": result,
     }

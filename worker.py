@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import json
-from pathlib import Path
 import time
 import traceback
 from typing import Any
@@ -25,7 +24,6 @@ from tools.job_queue import (
     setup_job_queue,
 )
 from tools.airtable_client import update_latest_agent_run_status
-from tools.email import send_safe_followup_email
 from tools.telegram import send_owner_approval_request, send_owner_status_notification
 
 
@@ -39,12 +37,13 @@ def process_one_job() -> dict[str, Any] | None:
     payload = dict(job.get("payload") or {})
 
     try:
-        auto_send_result = None
         telegram_result = None
+        workflow_state: dict[str, Any] = {}
         try:
             workflow_result = run_approval_workflow_status(lead_id)
             workflow_status = workflow_result["status"]
             workflow_summary = workflow_result["summary"]
+            workflow_state = dict(workflow_result.get("state") or {})
         except GraphInterrupt as exc:
             workflow_status = "pending_approval"
             workflow_summary = (
@@ -53,8 +52,12 @@ def process_one_job() -> dict[str, Any] | None:
             )
 
         latest_run = _latest_agent_run_fields(lead_id)
-        decision = _decision_from_latest_run(latest_run)
-        send_policy = str(decision.get("send_policy") or "approval_required")
+        decision = workflow_state.get("decision") or _decision_from_latest_run(latest_run)
+        send_policy = str(
+            workflow_state.get("send_policy")
+            or decision.get("send_policy")
+            or "approval_required"
+        )
 
         if workflow_status == "pending_approval":
             telegram_result = send_owner_approval_request(
@@ -78,20 +81,10 @@ def process_one_job() -> dict[str, Any] | None:
                 )
             mark_lead_job_waiting_approval(job_id)
         else:
-            completion_status = _completion_status_from_policy(send_policy)
-            auto_send_result = None
-            if completion_status == "auto_sent":
-                auto_send_result = send_safe_followup_email.invoke(
-                    {
-                        "lead_id": lead_id,
-                        "to": str(payload.get("email") or ""),
-                        "subject": str(latest_run.get("draft_subject") or ""),
-                        "body": str(latest_run.get("draft_body") or ""),
-                        "send_policy_reason": str(
-                            decision.get("send_policy_reason") or ""
-                        ),
-                    }
-                )
+            completion_status = _completion_status_from_state(
+                workflow_state=workflow_state,
+                send_policy=send_policy,
+            )
 
             if completion_status != "succeeded":
                 update_latest_agent_run_status(
@@ -126,7 +119,7 @@ def process_one_job() -> dict[str, Any] | None:
             "status": workflow_status,
             "summary": workflow_summary,
             "send_policy": send_policy,
-            "auto_send": auto_send_result,
+            "sent_email": workflow_state.get("sent_email"),
             "telegram": telegram_result,
         }
     except Exception as exc:
@@ -152,6 +145,21 @@ def run_worker(poll_interval: float) -> None:
         time.sleep(poll_interval)
 
 
+def _completion_status_from_state(
+    *,
+    workflow_state: dict[str, Any],
+    send_policy: str,
+) -> str:
+    final_status = str(workflow_state.get("final_status") or "")
+    if final_status == "sent" and send_policy == "auto_send":
+        return "auto_sent"
+    if final_status == "sent":
+        return "approved_sent"
+    if final_status == "not_sent":
+        return "not_sent"
+    return "succeeded"
+
+
 def _decision_from_latest_run(run_fields: dict[str, Any]) -> dict[str, Any]:
     artifact_paths = run_fields.get("artifact_paths")
     if not artifact_paths:
@@ -159,18 +167,11 @@ def _decision_from_latest_run(run_fields: dict[str, Any]) -> dict[str, Any]:
 
     try:
         paths = json.loads(str(artifact_paths))
-        decision_path = Path(paths["decision"])
-        return json.loads(decision_path.read_text(encoding="utf-8"))
+        decision_path = paths["decision"]
+        with open(decision_path, encoding="utf-8") as handle:
+            return json.load(handle)
     except (KeyError, OSError, json.JSONDecodeError):
         return {}
-
-
-def _completion_status_from_policy(send_policy: str) -> str:
-    if send_policy == "auto_send":
-        return "auto_sent"
-    if send_policy == "do_not_send":
-        return "not_sent"
-    return "succeeded"
 
 
 def _owner_status_label(status: str) -> str:

@@ -28,6 +28,33 @@ def _normalize_human_decision(value) -> str:
     return "reject"
 
 
+def write_sent_email_artifact(
+    *,
+    lead_id: str,
+    to: str,
+    subject: str,
+    body: str,
+    transport: str,
+    approval_required: bool,
+    send_policy: str,
+    send_policy_reason: str = "",
+) -> dict:
+    run_id = new_run_id(f"email_{lead_id}")
+    path = output_run_dir(run_id) / "sent_email.json"
+    payload = {
+        "lead_id": lead_id,
+        "to": to,
+        "subject": subject,
+        "body": body,
+        "sent_at": now_iso(),
+        "transport": transport,
+        "approval_required": approval_required,
+        "send_policy": send_policy,
+        "send_policy_reason": send_policy_reason,
+    }
+    return {"sent_email_path": write_json(path, payload)}
+
+
 @tool(
     "send_followup_email",
     description=(
@@ -60,17 +87,18 @@ def send_followup_email(lead_id: str, to: str, subject: str, body: str) -> str:
             indent=2,
         )
 
-    run_id = new_run_id(f"email_{lead_id}")
-    path = output_run_dir(run_id) / "sent_email.json"
-    payload = {
-        "lead_id": lead_id,
-        "to": to,
-        "subject": subject,
-        "body": body,
-        "sent_at": now_iso(),
-        "transport": "simulated_file_write",
-    }
-    return json.dumps({"sent_email_path": write_json(path, payload)}, indent=2)
+    return json.dumps(
+        write_sent_email_artifact(
+            lead_id=lead_id,
+            to=to,
+            subject=subject,
+            body=body,
+            transport="simulated_approved_send",
+            approval_required=True,
+            send_policy="approval_required",
+        ),
+        indent=2,
+    )
 
 
 @tool(
@@ -88,17 +116,16 @@ def send_safe_followup_email(
     body: str,
     send_policy_reason: str = "",
 ) -> str:
-    run_id = new_run_id(f"email_{lead_id}")
-    path = output_run_dir(run_id) / "sent_email.json"
-    payload = {
-        "lead_id": lead_id,
-        "to": to,
-        "subject": subject,
-        "body": body,
-        "sent_at": now_iso(),
-        "transport": "simulated_safe_auto_send",
-        "approval_required": False,
-        "send_policy": "auto_send",
-        "send_policy_reason": send_policy_reason,
-    }
-    return json.dumps({"sent_email_path": write_json(path, payload)}, indent=2)
+    return json.dumps(
+        write_sent_email_artifact(
+            lead_id=lead_id,
+            to=to,
+            subject=subject,
+            body=body,
+            transport="simulated_safe_auto_send",
+            approval_required=False,
+            send_policy="auto_send",
+            send_policy_reason=send_policy_reason,
+        ),
+        indent=2,
+    )

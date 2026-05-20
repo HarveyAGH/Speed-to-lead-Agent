@@ -31,7 +31,7 @@ pythonpath = ["."]
 testpaths = ["tests"]
 
 [tool.setuptools]
-py-modules = ["app", "config", "graph", "demo_harness", "worker"]
+py-modules = ["app", "config", "graph", "demo_harness", "worker", "state", "workflow_nodes"]
 
 [tool.setuptools.packages.find]
 include = ["agents", "agents.*", "schemas", "schemas.*", "tools", "tools.*"]
