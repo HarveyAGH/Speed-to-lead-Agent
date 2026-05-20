@@ -20,7 +20,10 @@ def save_crm_note(
 ) -> str:
     run_id = new_run_id(f"lead_{lead_id}")
     note_path = output_run_dir(run_id) / "crm_note.md"
-    evidence = json.loads(evidence_json)
+    evidence = _loads_or_error(evidence_json, "invalid_evidence_json")
+    if "error" in evidence:
+        return json.dumps(evidence, indent=2)
+
     note = "\n".join(
         [
             f"# CRM Note: {lead_id}",
@@ -55,7 +58,15 @@ def save_run_artifacts(
 ) -> str:
     run_id = new_run_id(f"lead_{lead_id}")
     run_dir = output_run_dir(run_id)
-    decision = normalize_decision(json.loads(decision_json), fallback_lead_id=lead_id)
+    raw_decision = _loads_or_error(decision_json, "invalid_decision_json")
+    if "error" in raw_decision:
+        return json.dumps(raw_decision, indent=2)
+
+    evidence = _loads_or_error(evidence_json, "invalid_evidence_json")
+    if "error" in evidence:
+        return json.dumps(evidence, indent=2)
+
+    decision = normalize_decision(raw_decision, fallback_lead_id=lead_id)
     paths = {
         "decision": write_json(
             run_dir / "decision.json",
@@ -65,7 +76,7 @@ def save_run_artifacts(
             run_dir / "draft_message.txt",
             f"Subject: {draft_subject}\n\n{draft_body}\n",
         ),
-        "evidence": write_json(run_dir / "evidence.json", json.loads(evidence_json)),
+        "evidence": write_json(run_dir / "evidence.json", evidence),
     }
 
     airtable_result = None
@@ -99,3 +110,20 @@ def save_run_artifacts(
         },
         indent=2,
     )
+
+
+def _loads_or_error(raw_json: str, error: str) -> dict:
+    try:
+        value = json.loads(raw_json)
+    except json.JSONDecodeError as exc:
+        return {
+            "error": error,
+            "detail": str(exc),
+        }
+
+    if not isinstance(value, dict):
+        return {
+            "error": error,
+            "detail": "Expected a JSON object.",
+        }
+    return value

@@ -352,7 +352,7 @@ Last verified test command:
 Last known result:
 
 ```text
-11 passed
+15 passed
 ```
 
 ## Data Flow Details
@@ -455,15 +455,45 @@ Already implemented:
 - Local artifact trail.
 - Basic test suite.
 
+## External Audit Response
+
+An external review flagged several issues. This section records what was accepted and what changed.
+
+### Accepted and patched
+
+- Manual `/approval/{lead_id}/approve` and `/reject` endpoints are now protected by `WEBHOOK_SHARED_SECRET` through the `x-webhook-secret` header.
+- Stale `running` jobs are now recovered back to `pending` after a threshold so a killed worker does not block a lead forever.
+- The worker no longer references `auto_send_result` before assignment in the approval-interrupt path.
+- Queue finalization now updates only `waiting_approval` jobs, so a duplicate approval callback cannot overwrite an already terminal `succeeded` job.
+- Tally payload normalization now ignores unknown fields instead of turning arbitrary labels into internal keys.
+- Lead payload fields are sanitized and length-limited before storage/use.
+- CRM/artifact JSON parsing now returns a structured error instead of raising directly on malformed JSON.
+- `config.py` no longer overwrites `AWS_BEARER_TOKEN_BEDROCK` with an empty string.
+- Regression tests were added for manual approval auth, unknown Tally fields, and lead field sanitization.
+
+### Accepted but still pending
+
+- Artifact paths are still fragmented across separate run directories.
+- Airtable and Telegram API calls still need retry/backoff handling.
+- Prompt-injection resistance is improved at the payload boundary, but subagent prompts still need explicit untrusted-input rules.
+- Context trimming is not implemented yet.
+- The Postgres checkpointer is cached through one process-level object; production deployment should confirm connection lifecycle under the target host.
+- Telegram callback/resume is still synchronous.
+
+### Needs nuance
+
+- The audit recommendation to switch structured output strategy should not be applied blindly. Bedrock previously failed in this repo with `response_format: Extra inputs are not permitted`, so the safer path is to keep the current tool-compatible flow for now and later test structured-output isolation in a dedicated final synthesis node.
+- A raw `StateGraph` may improve visual debuggability, but the current `create_agent` supervisor remains the right complexity level until the product behavior is stable.
+
 ## Known Gaps / Audit Targets
 
-These are the most important areas to review.
+These are the most important areas still worth reviewing.
 
 ### Security and abuse resistance
 
 - No production authentication around `/webhooks/tally` unless `WEBHOOK_SHARED_SECRET` is configured and sent correctly.
 - Telegram webhook secret exists but depends on correct Telegram `setWebhook` configuration.
-- Manual `/approval/{lead_id}/approve` and `/reject` endpoints exist and are not independently authenticated. These were useful for testing but should be removed or protected before public deployment.
+- Manual `/approval/{lead_id}/approve` and `/reject` endpoints now require `WEBHOOK_SHARED_SECRET`, but they are still secondary legacy endpoints and can likely be removed once Telegram approval is the only owner approval path.
 - No rate limiting.
 - No request body size limits.
 - No IP allowlist.
@@ -472,7 +502,7 @@ These are the most important areas to review.
 
 ### Reliability
 
-- Stale `running` jobs are not automatically recovered yet.
+- Stale `running` jobs are automatically recovered to `pending` after the configured threshold.
 - Worker is a single process script, not a managed service.
 - No dead-letter queue.
 - No exponential backoff.
@@ -484,7 +514,7 @@ These are the most important areas to review.
 
 - Airtable schema is assumed.
 - Lead identity is `lead_id`; if Tally IDs change or field mappings shift, duplicates can happen.
-- No strict validation layer for inbound payloads yet.
+- Inbound payloads are normalized, unknown Tally fields are ignored, and known fields are sanitized/length-limited. A stricter Pydantic validation layer is still pending.
 - `urgency` normalization is currently limited to `same_day`, `this_week`, and `low`.
 - Business configuration is still profile/prompt driven, not tenant-aware.
 
@@ -515,41 +545,37 @@ These are the most important areas to review.
 
 Recommended next implementation order:
 
-1. Stale job recovery:
-   - Detect `running` jobs older than a threshold.
-   - Requeue or mark failed.
-   - Prevent permanently stuck jobs.
-
-2. Response-time metrics:
+1. Response-time metrics:
    - Record `received_at`, `queued_at`, `started_at`, `finished_at`, `first_response_at`.
    - Compute speed-to-lead seconds/minutes.
    - Write metrics to Airtable.
    - This is important for selling ROI.
 
-3. Safer auto-send guard:
+2. Safer auto-send guard:
    - Add deterministic checks before `send_safe_followup_email`.
    - Block auto-send if draft contains pricing, guarantees, discounts, legal claims, calendar commitments, or missing recipient email.
 
-4. Auth hardening:
-   - Remove or protect manual `/approval/{lead_id}/...` endpoints.
+3. Auth hardening:
+   - Remove legacy manual `/approval/{lead_id}/...` endpoints once Telegram approval is fully trusted.
    - Require shared secret for Tally webhook.
    - Confirm Telegram secret header is enforced in deployment.
+   - Add request size limits and rate limiting at the web layer.
 
-5. Real deployment:
+4. Real deployment:
    - Deploy API and worker as separate processes.
    - Use production Postgres.
    - Configure environment variables outside source control.
 
-6. Real email provider:
+5. Real email provider:
    - Add Resend or Gmail only after the workflow is stable.
    - Keep simulation until then to avoid wasting free-tier/API quota during debugging.
 
-7. Minimal evals:
+6. Minimal evals:
    - Add tests for policy-violating drafts.
    - Add fixtures for hot lead, warm lead, bad fit, spam/vendor.
    - Assert expected send policy and final queue state.
 
-8. Multi-client configuration:
+7. Multi-client configuration:
    - Move agency profile/business rules toward tenant-specific config.
    - Avoid hardcoding one agency persona forever.
 
@@ -570,12 +596,11 @@ Please evaluate:
 
 ## My Status Rating
 
-I give this a status rating of: **68% production-shaped MVP**.
+I give this a status rating of: **72% production-shaped MVP after the audit-hardening patch**.
 
 Meaning:
 
 - It is much stronger than a local demo because it has real webhook intake, Airtable, Postgres queueing, Postgres checkpointing, Telegram approval, and deterministic send policy.
-- It is not yet a production deployment because real email is simulated, endpoint auth is incomplete, stale job recovery is missing, response-time metrics are missing, and deployment/process management is not finished.
+- It is not yet a production deployment because real email is simulated, response-time metrics are missing, deployment/process management is not finished, external API retries are missing, and deeper prompt-injection/content-safety hardening is still needed.
 
 What is YOUR rating compared to mine? Please give your percentage and explain the top 3 reasons your score differs.
-

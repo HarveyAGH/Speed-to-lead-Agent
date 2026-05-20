@@ -10,7 +10,6 @@ from langchain_aws import ChatBedrock
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 load_dotenv(dotenv_path=PROJECT_ROOT / ".env", override=True)
-os.environ["AWS_BEARER_TOKEN_BEDROCK"] = os.getenv("AWS_BEARER_TOKEN_BEDROCK", "")
 
 
 BEDROCK_MODEL_ID = os.getenv("BEDROCK_MODEL_ID", "global.anthropic.claude-haiku-4-5-20251001-v1:0")

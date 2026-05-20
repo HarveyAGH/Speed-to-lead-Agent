@@ -9,6 +9,8 @@ from psycopg.rows import dict_row
 from config import POSTGRES_DB_URI
 
 
+STALE_RUNNING_MINUTES = 10
+
 JOB_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS lead_jobs (
     id BIGSERIAL PRIMARY KEY,
@@ -55,7 +57,10 @@ def enqueue_lead_job(lead_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     return dict(row)
 
 
-def find_active_job_by_lead_id(lead_id: str) -> dict[str, Any] | None:
+def find_active_job_by_lead_id(
+    lead_id: str,
+    stale_after_minutes: int = STALE_RUNNING_MINUTES,
+) -> dict[str, Any] | None:
     setup_job_queue()
     with _connect() as conn:
         row = conn.execute(
@@ -63,17 +68,24 @@ def find_active_job_by_lead_id(lead_id: str) -> dict[str, Any] | None:
             SELECT id, lead_id, status, attempts, max_attempts, last_error, created_at, updated_at
             FROM lead_jobs
             WHERE lead_id = %s
-              AND status IN ('pending', 'running', 'waiting_approval')
+              AND (
+                status IN ('pending', 'waiting_approval')
+                OR (
+                    status = 'running'
+                    AND updated_at >= now() - (%s * interval '1 minute')
+                )
+              )
             ORDER BY created_at DESC
             LIMIT 1;
             """,
-            (lead_id,),
+            (lead_id, stale_after_minutes),
         ).fetchone()
     return dict(row) if row else None
 
 
 def claim_next_lead_job() -> dict[str, Any] | None:
     setup_job_queue()
+    recover_stale_running_jobs()
     with _connect() as conn:
         with conn.transaction():
             row = conn.execute(
@@ -158,7 +170,7 @@ def mark_latest_waiting_job_resolved(lead_id: str, status: str) -> dict[str, Any
                 SELECT id
                 FROM lead_jobs
                 WHERE lead_id = %s
-                  AND status IN ('waiting_approval', 'succeeded')
+                  AND status = 'waiting_approval'
                 ORDER BY created_at DESC
                 LIMIT 1
             )
@@ -174,6 +186,30 @@ def mark_latest_waiting_job_resolved(lead_id: str, status: str) -> dict[str, Any
             "reason": "No waiting_approval queue job found for lead_id.",
         }
     return dict(row)
+
+
+def recover_stale_running_jobs(
+    stale_after_minutes: int = STALE_RUNNING_MINUTES,
+) -> dict[str, Any]:
+    with _connect() as conn:
+        rows = conn.execute(
+            """
+            UPDATE lead_jobs
+            SET status = 'pending',
+                last_error = 'recovered_from_stale_running',
+                updated_at = now()
+            WHERE status = 'running'
+              AND updated_at < now() - (%s * interval '1 minute')
+              AND attempts < max_attempts
+            RETURNING id, lead_id, status, attempts, last_error;
+            """,
+            (stale_after_minutes,),
+        ).fetchall()
+
+    return {
+        "recovered": len(rows),
+        "jobs": [dict(row) for row in rows],
+    }
 
 
 def mark_lead_job_failed(job_id: int, error: str) -> dict[str, Any]:

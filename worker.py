@@ -21,6 +21,7 @@ from tools.job_queue import (
     mark_lead_job_failed,
     mark_lead_job_succeeded,
     mark_lead_job_waiting_approval,
+    recover_stale_running_jobs,
     setup_job_queue,
 )
 from tools.airtable_client import update_latest_agent_run_status
@@ -38,6 +39,8 @@ def process_one_job() -> dict[str, Any] | None:
     payload = dict(job.get("payload") or {})
 
     try:
+        auto_send_result = None
+        telegram_result = None
         try:
             workflow_result = run_approval_workflow_status(lead_id)
             workflow_status = workflow_result["status"]
@@ -130,6 +133,7 @@ def process_one_job() -> dict[str, Any] | None:
 
 def run_worker(poll_interval: float) -> None:
     setup_job_queue()
+    recover_stale_running_jobs()
     print("Lead worker started. Waiting for queued jobs...")
     while True:
         result = process_one_job()

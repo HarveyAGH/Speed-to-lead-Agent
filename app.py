@@ -101,12 +101,20 @@ def tally_webhook(
 
 
 @app.post("/approval/{lead_id}/approve")
-def approve_lead_send(lead_id: str) -> dict[str, Any]:
+def approve_lead_send(
+    lead_id: str,
+    x_webhook_secret: str | None = Header(default=None),
+) -> dict[str, Any]:
+    _require_management_secret(x_webhook_secret)
     return resume_lead_send(lead_id, "approve")
 
 
 @app.post("/approval/{lead_id}/reject")
-def reject_lead_send(lead_id: str) -> dict[str, Any]:
+def reject_lead_send(
+    lead_id: str,
+    x_webhook_secret: str | None = Header(default=None),
+) -> dict[str, Any]:
+    _require_management_secret(x_webhook_secret)
     return resume_lead_send(lead_id, "reject")
 
 
@@ -211,19 +219,19 @@ def normalize_lead_payload(payload: dict[str, Any]) -> dict[str, str]:
 
     lead_id = str(fields.get("lead_id") or f"lead_{uuid4().hex[:8]}")
     return {
-        "lead_id": lead_id,
-        "received_at": str(fields.get("received_at") or ""),
-        "name": str(fields.get("name") or ""),
-        "email": str(fields.get("email") or ""),
-        "company": str(fields.get("company") or ""),
-        "role": str(fields.get("role") or ""),
-        "source": str(fields.get("source") or "website_form"),
-        "service_interest": str(fields.get("service_interest") or ""),
-        "message": str(fields.get("message") or ""),
-        "budget": str(fields.get("budget") or ""),
-        "timeline": str(fields.get("timeline") or ""),
-        "website": str(fields.get("website") or ""),
-        "status": str(fields.get("status") or "new"),
+        "lead_id": _sanitize_lead_value(lead_id, limit=120),
+        "received_at": _sanitize_lead_value(fields.get("received_at"), limit=120),
+        "name": _sanitize_lead_value(fields.get("name"), limit=200),
+        "email": _sanitize_lead_value(fields.get("email"), limit=254),
+        "company": _sanitize_lead_value(fields.get("company"), limit=200),
+        "role": _sanitize_lead_value(fields.get("role"), limit=120),
+        "source": _sanitize_lead_value(fields.get("source") or "website_form", limit=80),
+        "service_interest": _sanitize_lead_value(fields.get("service_interest"), limit=300),
+        "message": _sanitize_lead_value(fields.get("message"), limit=2000),
+        "budget": _sanitize_lead_value(fields.get("budget"), limit=120),
+        "timeline": _sanitize_lead_value(fields.get("timeline"), limit=120),
+        "website": _sanitize_lead_value(fields.get("website"), limit=300),
+        "status": _sanitize_lead_value(fields.get("status") or "new", limit=80),
     }
 
 
@@ -274,11 +282,25 @@ def _normalize_field_name(name: Any) -> str:
         "website": "website",
         "status": "status",
     }
-    return aliases.get(normalized, normalized.replace(" ", "_"))
+    return aliases.get(normalized, "")
 
 
 def _airtable_lead_fields(lead: dict[str, str]) -> dict[str, str]:
     return {key: value for key, value in lead.items() if value != ""}
+
+
+def _sanitize_lead_value(value: Any, limit: int) -> str:
+    text = "" if value is None else str(value)
+    cleaned = "".join(
+        char if char in {"\n", "\t"} or ord(char) >= 32 else " "
+        for char in text
+    )
+    return cleaned.strip()[:limit]
+
+
+def _require_management_secret(secret: str | None) -> None:
+    if not WEBHOOK_SHARED_SECRET or secret != WEBHOOK_SHARED_SECRET:
+        raise HTTPException(status_code=401, detail="Unauthorized")
 
 
 def _latest_agent_run_fields(lead_id: str) -> dict[str, Any]:

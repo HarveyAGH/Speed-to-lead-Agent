@@ -57,3 +57,34 @@ def test_telegram_webhook_ignores_duplicate_final_status(monkeypatch):
     )
 
     assert result["status"] == "duplicate_callback_ignored"
+
+
+def test_manual_approval_endpoint_requires_management_secret(monkeypatch):
+    monkeypatch.setattr(app, "WEBHOOK_SHARED_SECRET", "expected-secret")
+
+    with pytest.raises(HTTPException) as exc_info:
+        app.approve_lead_send("lead_1", x_webhook_secret=None)
+
+    assert exc_info.value.status_code == 401
+
+
+def test_manual_approval_endpoint_accepts_management_secret(monkeypatch):
+    monkeypatch.setattr(app, "WEBHOOK_SHARED_SECRET", "expected-secret")
+    monkeypatch.setattr(
+        app,
+        "resume_lead_send",
+        lambda lead_id, decision: {
+            "status": decision,
+            "lead_id": lead_id,
+        },
+    )
+
+    result = app.approve_lead_send(
+        "lead_1",
+        x_webhook_secret="expected-secret",
+    )
+
+    assert result == {
+        "status": "approve",
+        "lead_id": "lead_1",
+    }
