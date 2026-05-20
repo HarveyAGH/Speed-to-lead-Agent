@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lead-intake-followup-agent"
+version = "0.1.0"
+description = "Sellable LangGraph/LangChain supervisor-subagent MVP for agency lead intake and follow-up."
+requires-python = ">=3.11"
+dependencies = [
+  "langchain>=1.0.0",
+  "langchain-aws>=1.0.0",
+  "langgraph>=1.0.0",
+  "langgraph-checkpoint-postgres>=3.0.0",
+  "psycopg[binary]>=3.2.0",
+  "pydantic>=2.7.0",
+  "email-validator>=2.0.0",
+  "python-dotenv>=1.0.0",
+  "fastapi>=0.115.0",
+  "uvicorn>=0.30.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "langgraph-cli[inmem]>=0.4.0",
+  "pytest>=8.0.0",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.setuptools]
+py-modules = ["app", "config", "graph", "demo_harness", "worker"]
+
+[tool.setuptools.packages.find]
+include = ["agents", "agents.*", "schemas", "schemas.*", "tools", "tools.*"]
+exclude = ["evals", "mock_data", "outputs", "prompts", "tests"]

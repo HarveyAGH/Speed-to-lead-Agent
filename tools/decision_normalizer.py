@@ -1,0 +1,240 @@
+from __future__ import annotations
+
+from typing import Any
+
+#The classifications that gets assigned to leads and saved to data
+VALID_CLASSIFICATIONS = {
+    "high_intent_sales_call",
+    "needs_clarification",
+    "bad_fit",
+    "spam_or_vendor",
+}
+
+# Severity of the lead
+#low - The lead is irrelevant
+#medium -  The lead is not as strong
+#high - Perfect lead
+VALID_FITS = {"high", "medium", "low"}
+
+# Urgency of when the customer wants the finished product
+#same_day - Immedieate need of service.
+#this_week - the need of product/service to be reached by this week
+#low - Not that urgent
+#@> Audit-low: I sense an inconsistency towards the 3 strings being the only things dependent on urgency, if this were to be a text-based response then 9 times out of 10 the lead wouldn't mention anything about urgencies, but this is different as compared to using forms considering the clients have a urgency field they're required to write which gives us the benefit of the information, Amazing for use cases regarding Clinic (i want to come take an appointment) in which we'd have to modify the urgency keyword to be "Scheduled Date" on the form, therefore making `scheduled Data` mask as `VALID_URGENCIES`. enabling the idea of a custom-made lead to speed agent across many industries such as clinic, marketing, and law firms. but this is nevertheless a low-informative severity since we are depending on 3 keywords rather than the actual date given by the clients, giving an owner a hardtime when it coems to actual details.
+VALID_URGENCIES = {"same_day", "this_week", "low"}
+
+# Kinda dont understand the objective here
+VALID_NEXT_ACTIONS = {
+    "book_discovery_call",
+    "ask_missing_info",
+    "send_pricing_context",
+    "nurture",
+    "disqualify",
+}
+
+#The send policies to be chosen depending on the lead, auto-send for non high leads, approval_required for important high leads, "do not send" for rejected ones
+VALID_SEND_POLICIES = {"auto_send", "approval_required", "do_not_send"}
+
+#Kinda dont understand the objective here
+VALID_RESPONSE_TYPES = {
+    "acknowledgment",
+    "qualification_questions",
+    "booking_invite",
+    "disqualification",
+    "none",
+}
+# Alert levels
+VALID_OWNER_ALERT_LEVELS = {"urgent", "normal", "none"}
+# Lead Temperatures 
+VALID_LEAD_TEMPERATURES = {"hot", "warm", "cold", "spam"}
+
+
+def normalize_decision(raw: dict[str, Any], fallback_lead_id: str = "") -> dict[str, Any]:
+    classification_text = _text(
+        raw.get("classification")
+        or raw.get("final_classification")
+        or raw.get("lead_type")
+        or raw.get("status")
+    )
+
+    recommended_text = _text(
+        raw.get("recommended_next_action")
+        or raw.get("recommended_action")
+        or raw.get("next_action")
+    )
+
+    classification = _normalize_classification(classification_text)
+    fit = _normalize_choice(raw.get("fit"), VALID_FITS, default="medium")
+    urgency = _normalize_choice(raw.get("urgency"), VALID_URGENCIES, default="low")
+    score = _normalize_score(raw.get("score"))
+    next_action = _normalize_next_action(recommended_text, classification_text)
+    policy = _derive_send_policy(
+        classification=classification,
+        fit=fit,
+        urgency=urgency,
+        score=score,
+        next_action=next_action,
+    )
+
+    return {
+        "lead_id": _text(raw.get("lead_id")) or fallback_lead_id,
+        "classification": classification,
+        "fit": fit,
+        "urgency": urgency,
+        "score": score,
+        "recommended_next_action": next_action,
+        **policy,
+    }
+
+
+def _text(value: Any) -> str:
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def _normalize_choice(value: Any, allowed: set[str], default: str) -> str:
+    text = _text(value).lower().replace("-", "_").replace(" ", "_")
+    if text in allowed:
+        return text
+    return default
+
+
+def _normalize_score(value: Any) -> int:
+    try:
+        score = int(float(value))
+    except (TypeError, ValueError):
+        return 0
+
+    return max(0, min(100, score))
+
+
+def _normalize_classification(text: str) -> str:
+    lowered = text.lower().replace("-", "_").replace(" ", "_")
+
+    if lowered in VALID_CLASSIFICATIONS:
+        return lowered
+
+    if "spam" in lowered or "vendor" in lowered:
+        return "spam_or_vendor"
+
+    if "bad" in lowered or "disqual" in lowered or "poor" in lowered:
+        return "bad_fit"
+
+    if "clarification" in lowered or "needs_info" in lowered or "missing" in lowered:
+        return "needs_clarification"
+
+    if "qualified" in lowered or "high_fit" in lowered or "high_intent" in lowered:
+        return "high_intent_sales_call"
+
+    return "needs_clarification"
+
+
+def _normalize_next_action(text: str, classification_text: str) -> str:
+    lowered = text.lower().replace("-", "_").replace(" ", "_")
+
+    if lowered in VALID_NEXT_ACTIONS:
+        return lowered
+
+    if "book" in lowered or "call" in lowered or "discovery" in lowered:
+        return "book_discovery_call"
+
+    if "missing" in lowered or "clarify" in lowered or "question" in lowered:
+        return "ask_missing_info"
+
+    if "price" in lowered or "pricing" in lowered:
+        return "send_pricing_context"
+
+    if "nurture" in lowered:
+        return "nurture"
+
+    if "disqual" in lowered or "reject" in lowered:
+        return "disqualify"
+
+    classification = _normalize_classification(classification_text)
+    if classification == "high_intent_sales_call":
+        return "book_discovery_call"
+    if classification == "needs_clarification":
+        return "ask_missing_info"
+    if classification in {"bad_fit", "spam_or_vendor"}:
+        return "disqualify"
+
+    return "ask_missing_info"
+
+
+def _derive_send_policy(
+    *,
+    classification: str,
+    fit: str,
+    urgency: str,
+    score: int,
+    next_action: str,
+) -> dict[str, str]:
+    """Map the business decision into deterministic speed-to-lead behavior."""
+    if classification == "spam_or_vendor":
+        return {
+            "lead_temperature": "spam",
+            "send_policy": "do_not_send",
+            "response_type": "none",
+            "owner_alert_level": "none",
+            "send_policy_reason": "Spam or vendor lead; no customer-facing response should be sent.",
+        }
+
+    if classification == "bad_fit" or next_action == "disqualify":
+        return {
+            "lead_temperature": "cold",
+            "send_policy": "approval_required",
+            "response_type": "disqualification",
+            "owner_alert_level": "normal",
+            "send_policy_reason": "Legitimate but poor-fit lead; owner should approve any rejection or redirection message.",
+        }
+
+    if next_action == "ask_missing_info" or classification == "needs_clarification":
+        return {
+            "lead_temperature": "warm",
+            "send_policy": "auto_send",
+            "response_type": "qualification_questions",
+            "owner_alert_level": "normal",
+            "send_policy_reason": "Low-risk first response asks clarifying questions without pricing, promises, or commitments.",
+        }
+
+    if (
+        classification == "high_intent_sales_call"
+        and next_action == "book_discovery_call"
+        and fit == "high"
+        and urgency == "same_day"
+        and score >= 80
+    ):
+        return {
+            "lead_temperature": "hot",
+            "send_policy": "approval_required",
+            "response_type": "booking_invite",
+            "owner_alert_level": "urgent",
+            "send_policy_reason": "Hot lead with booking intent; owner approval protects calendar, tone, and commercial commitments.",
+        }
+
+    if next_action == "book_discovery_call":
+        return {
+            "lead_temperature": "warm",
+            "send_policy": "approval_required",
+            "response_type": "booking_invite",
+            "owner_alert_level": "normal",
+            "send_policy_reason": "Booking invite may create expectations; owner should approve before send.",
+        }
+
+    if next_action in {"send_pricing_context", "nurture"}:
+        return {
+            "lead_temperature": "warm",
+            "send_policy": "approval_required",
+            "response_type": "acknowledgment",
+            "owner_alert_level": "normal",
+            "send_policy_reason": "Pricing or nurture language can affect positioning; owner approval required.",
+        }
+
+    return {
+        "lead_temperature": "warm",
+        "send_policy": "auto_send",
+        "response_type": "acknowledgment",
+        "owner_alert_level": "normal",
+        "send_policy_reason": "Default safe first response; no high-risk action detected.",
+    }

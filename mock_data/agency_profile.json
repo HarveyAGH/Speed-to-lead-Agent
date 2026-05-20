@@ -1,0 +1,40 @@
+{
+  "agency_name": "Northstar Growth Studio",
+  "services": [
+    "paid search management",
+    "landing page optimization",
+    "conversion tracking setup",
+    "lead generation funnels",
+    "AI Automation"
+  ],
+  "ideal_customer_profile": {
+    "business_type": ["local service business", "B2B service company", "specialty clinic", "home services company"],
+    "monthly_ad_budget_minimum_usd": 3000,
+    "preferred_timeline_for_ad": "within 30 days",
+    "monthly_ai_automation_budget_usd": 1000,
+    "preferred_timeline_for_automation": "within 5 days",
+    "bad_fit_signals": [
+      "job seeker",
+      "vendor pitch",
+      "no business website",
+      "asks for guaranteed results",
+      "budget below 1000 USD"
+    ]
+  },
+  "required_fields_for_sales_call": [
+    "service_interest",
+    "budget",
+    "timeline",
+    "website"
+  ],
+  "owner": {
+    "name": "Alex Rivera",
+    "reply_from": "alex@northstargrowth.example"
+  },
+  "crm_statuses": [
+    "new_high_fit",
+    "needs_info",
+    "nurture",
+    "disqualified"
+  ]
+}

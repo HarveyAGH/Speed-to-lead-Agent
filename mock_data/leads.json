@@ -1,0 +1,44 @@
+[
+  {
+    "lead_id": "lead_001",
+    "received_at": "2026-05-16T08:15:00+08:00",
+    "name": "Maya Chen",
+    "email": "maya@clearviewdental.example",
+    "company": "Clearview Dental",
+    "role": "Practice Manager",
+    "source": "website_form",
+    "service_interest": "paid search management and landing page optimization",
+    "message": "We are opening a second clinic and need more implant consultation leads. We have tried Google Ads before but tracking was messy. Can we talk this week?",
+    "budget": "$6,000/month ad spend plus management fee",
+    "timeline": "this month",
+    "website": "https://clearviewdental.example"
+  },
+  {
+    "lead_id": "lead_002",
+    "received_at": "2026-05-16T09:40:00+08:00",
+    "name": "Jordan Lee",
+    "email": "jordan@freshcoat.example",
+    "company": "Fresh Coat Pros",
+    "role": "Owner",
+    "source": "facebook_lead_form",
+    "service_interest": "lead generation",
+    "message": "Need more painting jobs. Not sure what budget is normal. Want to start soon if it makes sense.",
+    "budget": null,
+    "timeline": "soon",
+    "website": "https://freshcoat.example"
+  },
+  {
+    "lead_id": "lead_003",
+    "received_at": "2026-05-16T11:05:00+08:00",
+    "name": "Chris Vendor",
+    "email": "chris@backlinkblast.example",
+    "company": "Backlink Blast",
+    "role": "Partnerships",
+    "source": "website_form",
+    "service_interest": "partnership",
+    "message": "We sell 10,000 backlinks for agencies. Let's partner. First month free.",
+    "budget": "$0",
+    "timeline": "anytime",
+    "website": "https://backlinkblast.example"
+  }
+]

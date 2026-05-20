@@ -1,0 +1,3 @@
+{"lead_id":"lead_001","expected_fit":"high","expected_urgency":"same_day","expected_next_action":"book_discovery_call","why":"Strong service fit, budget above threshold, clear timeline, website present."}
+{"lead_id":"lead_002","expected_fit":"medium","expected_urgency":"this_week","expected_next_action":"ask_missing_info","why":"Real buyer, but budget is missing and needs clarification before call priority."}
+{"lead_id":"lead_003","expected_fit":"low","expected_urgency":"low","expected_next_action":"disqualify","why":"Vendor pitch, zero budget, not a buyer."}
