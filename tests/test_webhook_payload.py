@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from app import _is_guarded_path, _safe_int, normalize_lead_payload
+from app import (
+    _is_guarded_path,
+    _safe_int,
+    build_lead_fingerprint,
+    normalize_lead_payload,
+)
 
 
 def test_normalize_flat_lead_payload_sets_defaults():
@@ -78,3 +83,26 @@ def test_guarded_paths_are_limited_to_public_write_endpoints():
 def test_safe_int_falls_back_for_bad_content_length():
     assert _safe_int("123") == 123
     assert _safe_int("bad") == 0
+
+
+def test_lead_fingerprint_is_stable_for_whitespace_and_case():
+    first = build_lead_fingerprint(
+        {
+            "email": "MAYA@EXAMPLE.COM",
+            "company": " Clearview Dental ",
+            "service_interest": "Lead follow-up automation",
+            "message": "Can we   talk this week?",
+            "website": "https://clearview.example",
+        }
+    )
+    second = build_lead_fingerprint(
+        {
+            "email": "maya@example.com",
+            "company": "clearview dental",
+            "service_interest": "lead follow-up automation",
+            "message": "Can we talk this week?",
+            "website": "https://clearview.example",
+        }
+    )
+
+    assert first == second

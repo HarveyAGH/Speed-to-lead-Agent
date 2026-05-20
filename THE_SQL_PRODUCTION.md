@@ -423,7 +423,7 @@ The target architecture is:
 Tally webhook
 -> FastAPI
 -> Airtable lead row
--> LangGraph supervisor
+-> LangGraph StateGraph pipeline
 -> Postgres checkpoint saved during interrupt
 -> Telegram approval button
 -> FastAPI receives Telegram callback

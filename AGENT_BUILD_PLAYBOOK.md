@@ -9,7 +9,7 @@ trigger
 -> input data
 -> deterministic tools
 -> specialist subagents
--> supervisor orchestration
+-> explicit graph orchestration
 -> visible artifacts
 -> deterministic send policy
 -> human approval only when risky
@@ -24,7 +24,9 @@ If you can explain each box, you understand the system.
 Tally form submission
 -> FastAPI webhook
 -> Airtable Leads row
--> LangGraph supervisor
+-> Postgres lead_jobs queue
+-> worker.py
+-> explicit LangGraph StateGraph
 -> lead qualifier / missing info / follow-up writer / CRM recorder
 -> local artifacts + Airtable Agent_runs row
 -> normalized send_policy
@@ -98,9 +100,9 @@ crm_recorder_agent: summarizes for the owner/CRM
 
 Each subagent gets a narrow job so the supervisor does not become one giant confused agent.
 
-### Supervisor
+### Graph Orchestration
 
-The supervisor owns the workflow order:
+The graph owns the workflow order:
 
 ```text
 load lead
@@ -109,10 +111,10 @@ run missing info
 draft follow-up
 record CRM note
 save artifacts
-request approval only if send_policy is approval_required
+send automatically, request approval, or do not send based on send_policy
 ```
 
-The supervisor is the manager. Subagents are specialists. Tools are hands.
+The graph is the map. Subagents are specialists. Tools are hands.
 
 ### Artifacts
 

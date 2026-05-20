@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "lead-intake-followup-agent"
 version = "0.1.0"
-description = "Sellable LangGraph/LangChain supervisor-subagent MVP for agency lead intake and follow-up."
+description = "Sellable LangGraph StateGraph speed-to-lead MVP for lead intake and follow-up."
 requires-python = ">=3.11"
 dependencies = [
   "langchain>=1.0.0",

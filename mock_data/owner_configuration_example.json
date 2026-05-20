@@ -1,0 +1,9 @@
+{
+  "owner_name": "Client Owner Name",
+  "business_name": "Client Business Name",
+  "sender_name": "Name shown in drafted customer emails",
+  "sender_title": "Founder / Owner / Growth Manager",
+  "timezone": "Client timezone, for example America/New_York",
+  "approval_channel": "telegram",
+  "approval_policy_note": "Describe what the system may auto-send and what must be approved by the owner."
+}

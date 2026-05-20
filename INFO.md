@@ -4,11 +4,11 @@ This document is written for an external technical reviewer who understands Pyth
 
 ## Executive Summary
 
-This repository implements a LangGraph/LangChain supervisor-subagent workflow for a sellable "speed-to-lead" automation product.
+This repository implements a LangGraph `StateGraph` workflow for a sellable "speed-to-lead" automation product.
 
 The target buyer is a small service business, agency, clinic, or local operator that receives inbound leads and loses revenue when response time is slow or inconsistent.
 
-The current system receives a lead from a Tally form webhook, stores the lead in Airtable, queues background processing in Postgres, invokes a LangGraph supervisor with specialist subagents, saves evidence artifacts, writes run data back to Airtable, determines whether the draft is safe to auto-send or requires owner approval, sends Telegram owner notifications, and resumes approval-gated sends through LangGraph interrupt/resume.
+The current system receives a lead from a Tally form webhook, stores the lead in Airtable, queues background processing in Postgres, invokes an explicit LangGraph pipeline with specialist LLM nodes, saves evidence artifacts, writes run data back to Airtable, determines whether the draft is safe to auto-send or requires owner approval, sends Telegram owner notifications, and resumes approval-gated sends through LangGraph interrupt/resume.
 
 Real integrations currently implemented:
 
@@ -58,8 +58,8 @@ Tally form
 -> Airtable Leads row
 -> Postgres lead_jobs queue
 -> worker.py
--> LangGraph supervisor
--> specialist subagents
+-> LangGraph StateGraph pipeline
+-> specialist LLM nodes
 -> save artifacts
 -> Airtable Agent_runs row
 -> deterministic send policy
@@ -129,45 +129,36 @@ Current behavior:
 - Uses `PostgresSaver` when `POSTGRES_DB_URI` is configured.
 - Falls back to `InMemorySaver` for local/demo mode.
 - Calls `checkpointer.setup()` for Postgres checkpoint tables.
-- Builds the supervisor graph through `build_supervisor(checkpointer=...)`.
+- Builds an explicit `StateGraph` with nodes for lead loading, qualification, missing-info detection, follow-up drafting, CRM note saving, artifact saving, approval gating, sending, and final summary.
 
 Why this matters:
 
 - Postgres checkpointing lets interrupted graph runs survive FastAPI/server restarts.
 - Approval resume depends on using the same `thread_id`, currently `lead-{lead_id}`.
 
-### `agents/supervisor.py`
+### `workflow_nodes.py`
 
-Creates the supervisor agent.
+Contains the node functions used by `graph.py`.
 
-Tools exposed to supervisor:
+Important nodes:
 
-- `load_lead`
-- `lead_qualifier_agent`
-- `missing_info_detector_agent`
-- `followup_writer_agent`
-- `crm_recorder_agent`
-- `save_run_artifacts`
-- `send_followup_email`
+- `load_lead_node`
+- `qualify_node`
+- `detect_missing_node`
+- `draft_followup_node`
+- `save_crm_note_node`
+- `save_artifacts_node`
+- `approval_gate_node`
+- `send_node`
+- `do_not_send_node`
+- `final_summary_node`
 
 Important design choice:
 
-- The supervisor can call the risky approval-gated send tool.
-- The supervisor does **not** own safe auto-send execution. The worker owns it after reading the normalized saved decision.
-- This avoids trusting the LLM to remember or enforce the auto-send policy correctly.
-
-### `prompts/supervisor.md`
-
-Supervisor runtime instructions.
-
-The supervisor is told to:
-
-1. Load the lead.
-2. Run qualification.
-3. Detect missing info.
-4. Draft follow-up.
-5. Save CRM note.
-6. Save artifacts.
+- The LLM is used for judgment-heavy work only.
+- Routing is deterministic through graph edges and `decision_normalizer.py`.
+- Risky customer-facing sends pause at `approval_gate_node`.
+- Safe sends go through `send_node` without requiring owner approval.
 7. Use the normalized send policy:
    - `approval_required`: call `send_followup_email`, which interrupts.
    - `auto_send`: do not call the send tool; worker handles safe auto-send.
@@ -348,7 +339,7 @@ Current test coverage:
 Last verified test command:
 
 ```bash
-.venv/bin/python -m py_compile app.py worker.py graph.py config.py agents/supervisor.py tools/decision_normalizer.py tools/email.py tools/crm.py tools/job_queue.py tools/telegram.py tools/airtable_client.py tools/http_client.py
+.venv/bin/python -m py_compile app.py worker.py graph.py workflow_nodes.py config.py tools/decision_normalizer.py tools/email.py tools/crm.py tools/job_queue.py tools/telegram.py tools/airtable_client.py tools/http_client.py
 .venv/bin/python -m pytest
 ```
 

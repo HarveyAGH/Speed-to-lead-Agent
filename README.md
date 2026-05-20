@@ -11,7 +11,7 @@ Tally form submission
 -> Airtable lead
 -> Postgres lead_jobs queue
 -> worker process
--> LangGraph supervisor
+-> explicit LangGraph StateGraph pipeline
 -> specialist subagents
 -> LangSmith trace
 -> local evidence artifacts
@@ -51,20 +51,24 @@ For one inbound lead, the agent:
 
 ```text
 lead_intake_agent
-  supervisor
+  graph.py
     load_lead
-    lead_qualifier_agent
-    missing_info_detector_agent
-    followup_writer_agent
-    crm_recorder_agent
-    save_run_artifacts
-    send_followup_email
+    qualify
+    detect_missing
+    draft_followup
+    save_crm_note
+    save_artifacts
+    approval_gate
+    send / do_not_send
+    final_summary
 
-  worker
-    send_safe_followup_email
+  worker.py
+    claims queued jobs
+    sends owner notifications
+    records final queue status
 ```
 
-The specialist agents are wrapped as tools. The supervisor controls the workflow, delegates specialist work, saves artifacts, and requests approval for risky sends. The worker owns safe auto-send after reading the normalized saved decision.
+The workflow order is explicit in `graph.py`. Specialist LLM agents still perform judgment-heavy work, but the graph controls routing, artifacts, approval boundaries, and final status.
 
 ## Production-Shaped Flow
 
@@ -74,12 +78,12 @@ Tally
 -> Airtable Leads row
 -> Postgres lead_jobs row
 -> worker.py claims the pending job
--> LangGraph supervisor with thread_id
--> subagent assessment and draft
+-> LangGraph StateGraph with thread_id
+-> specialist assessment and draft nodes
 -> save artifacts + Agent_runs row
 -> decision_normalizer derives send_policy
--> if auto_send: worker calls send_safe_followup_email
--> if approval_required: send_followup_email calls interrupt()
+-> if auto_send: graph writes simulated sent_email.json
+-> if approval_required: approval_gate calls interrupt()
 -> Telegram approval message with decision snapshot and draft preview
 -> /telegram/webhook receives button click
 -> graph resumes with Command(resume="approve" or "reject")

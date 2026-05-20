@@ -26,6 +26,12 @@ MODEL: Any = llm
 OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", str(PROJECT_ROOT / "outputs")))
 MOCK_DATA_DIR = Path(os.getenv("MOCK_DATA_DIR", str(PROJECT_ROOT / "mock_data")))
 PROMPT_DIR = Path(os.getenv("PROMPT_DIR", str(PROJECT_ROOT / "prompts")))
+OWNER_CONFIG_PATH = Path(
+    os.getenv(
+        "OWNER_CONFIG_PATH",
+        str(MOCK_DATA_DIR / "owner_configuration.json"),
+    )
+)
 
 AIRTABLE_API_KEY = os.getenv("AIRTABLE_API_KEY", "")
 AIRTABLE_BASE_ID = os.getenv("AIRTABLE_BASE_ID", "")

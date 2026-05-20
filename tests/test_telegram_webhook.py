@@ -4,6 +4,7 @@ import pytest
 from fastapi import HTTPException
 
 import app
+from tools.owner_config import get_owner_config
 
 
 def test_telegram_webhook_rejects_invalid_secret(monkeypatch):
@@ -88,3 +89,11 @@ def test_manual_approval_endpoint_accepts_management_secret(monkeypatch):
         "status": "approve",
         "lead_id": "lead_1",
     }
+
+
+def test_owner_config_loads_default_file():
+    get_owner_config.cache_clear()
+    config = get_owner_config()
+
+    assert config["owner_name"]
+    assert config["business_name"]

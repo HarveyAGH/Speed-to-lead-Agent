@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import re
 from collections import defaultdict, deque
 from time import monotonic
 from typing import Any
@@ -27,10 +29,12 @@ from tools.airtable_client import (
 from tools.job_queue import (
     enqueue_lead_job,
     find_active_job_by_lead_id,
+    find_existing_job_by_fingerprint,
     list_recent_jobs,
     mark_latest_waiting_job_resolved,
     queue_is_configured,
 )
+from tools.owner_config import get_owner_config
 
 from tools.telegram import (
     answer_callback_query,
@@ -78,6 +82,11 @@ def health() -> dict[str, Any]:
         "queue_configured": queue_is_configured(),
         "telegram_configured": telegram_is_configured(),
         "telegram_webhook_secret_configured": bool(TELEGRAM_WEBHOOK_SECRET),
+        "owner_config": {
+            "owner_name": get_owner_config().get("owner_name"),
+            "business_name": get_owner_config().get("business_name"),
+            "approval_channel": get_owner_config().get("approval_channel"),
+        },
     }
 
 
@@ -110,6 +119,19 @@ def tally_webhook(
             "airtable_record": existing_lead,
         }
 
+    lead_fingerprint = build_lead_fingerprint(lead)
+    duplicate_job = find_existing_job_by_fingerprint(lead_fingerprint)
+    if duplicate_job and duplicate_job["lead_id"] != lead["lead_id"]:
+        return {
+            "status": "duplicate_fingerprint_ignored",
+            "lead_id": lead["lead_id"],
+            "reason": (
+                "A lead with the same email/company/message fingerprint was already "
+                "queued or processed."
+            ),
+            "duplicate_of": duplicate_job,
+        }
+
     active_job = find_active_job_by_lead_id(lead["lead_id"])
     if active_job:
         return {
@@ -126,7 +148,11 @@ def tally_webhook(
         else create_lead(_airtable_lead_fields(lead))
     )
 
-    job = enqueue_lead_job(lead["lead_id"], lead)
+    job = enqueue_lead_job(
+        lead["lead_id"],
+        lead,
+        lead_fingerprint=lead_fingerprint,
+    )
 
     return {
         "status": "queued",
@@ -269,6 +295,23 @@ def normalize_lead_payload(payload: dict[str, Any]) -> dict[str, str]:
         "website": _sanitize_lead_value(fields.get("website"), limit=300),
         "status": _sanitize_lead_value(fields.get("status") or "new", limit=80),
     }
+
+
+def build_lead_fingerprint(lead: dict[str, str]) -> str:
+    """Build a stable duplicate key from the human/business content of a lead."""
+    parts = [
+        lead.get("email", ""),
+        lead.get("company", ""),
+        lead.get("service_interest", ""),
+        lead.get("message", ""),
+        lead.get("website", ""),
+    ]
+    normalized = "|".join(_normalize_fingerprint_part(part) for part in parts)
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def _normalize_fingerprint_part(value: Any) -> str:
+    return re.sub(r"\s+", " ", str(value or "").strip().lower())
 
 
 def _extract_tally_fields(payload: dict[str, Any]) -> dict[str, Any]:
@@ -418,19 +461,12 @@ def run_approval_workflow(lead_id: str) -> str:
 def run_approval_workflow_status(lead_id: str) -> dict[str, Any]:
     from graph import graph
 
-    config = {
-        "configurable": {
-            "thread_id": f"lead-{lead_id}",
-        },
-        "run_name": f"lead-intake-{lead_id}",
-        "tags": ["webhook", "tally", "lead_intake", "pipeline"],
-        "metadata": {
-            "lead_id": lead_id,
-            "thread_id": f"lead-{lead_id}",
-            "source": "tally",
-            "workflow": "lead_intake_pipeline",
-        },
-    }
+    config = build_trace_config(
+        lead_id=lead_id,
+        phase="initial",
+        source="tally",
+        tags=["webhook", "tally", "lead_intake", "pipeline"],
+    )
     result = graph.invoke(
         {"lead_id": lead_id},
         config=config,
@@ -457,19 +493,13 @@ def run_approval_workflow_status(lead_id: str) -> dict[str, Any]:
 def resume_lead_send(lead_id: str, decision: str) -> dict[str, Any]:
     from graph import graph
 
-    config = {
-        "configurable": {
-            "thread_id": f"lead-{lead_id}",
-        },
-        "run_name": f"{decision}-send-{lead_id}",
-        "tags": ["approval", "lead_intake"],
-        "metadata": {
-            "lead_id": lead_id,
-            "thread_id": f"lead-{lead_id}",
-            "decision": decision,
-            "workflow": "lead_intake",
-        },
-    }
+    config = build_trace_config(
+        lead_id=lead_id,
+        phase=f"approval.{decision}",
+        source="telegram",
+        tags=["approval", "telegram", "lead_intake", "pipeline"],
+        metadata={"decision": decision},
+    )
 
     result = graph.invoke(Command(resume=decision), config=config)
 
@@ -478,4 +508,35 @@ def resume_lead_send(lead_id: str, decision: str) -> dict[str, Any]:
         "lead_id": lead_id,
         "result": result.get("summary", "Workflow resumed."),
         "state": result,
+    }
+
+
+def build_trace_config(
+    *,
+    lead_id: str,
+    phase: str,
+    source: str,
+    tags: list[str],
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    thread_id = f"lead-{lead_id}"
+    base_metadata = {
+        "lead_id": lead_id,
+        "thread_id": thread_id,
+        "source": source,
+        "workflow": "speed_to_lead",
+        "workflow_phase": phase,
+        "workflow_architecture": "explicit_stategraph",
+        "checkpoint_backend": "postgres",
+    }
+    if metadata:
+        base_metadata.update(metadata)
+
+    return {
+        "configurable": {
+            "thread_id": thread_id,
+        },
+        "run_name": f"speed_to_lead.{phase}.{lead_id}",
+        "tags": tags,
+        "metadata": base_metadata,
     }

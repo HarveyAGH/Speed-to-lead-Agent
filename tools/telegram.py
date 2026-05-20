@@ -7,6 +7,7 @@ from urllib.request import Request
 
 from config import PUBLIC_BASE_URL, TELEGRAM_BOT_TOKEN, TELEGRAM_OWNER_CHAT_ID
 from tools.http_client import request_json_with_retries
+from tools.owner_config import business_label, owner_label
 
 
 def telegram_is_configured() -> bool:
@@ -144,7 +145,8 @@ def build_owner_approval_message(
 
     return "\n".join(
         [
-            "🔔 Lead approval needed!",
+            f"🔔 Lead approval needed for {business_label()}",
+            f"Owner: {owner_label()}",
             "",
             f"Lead: {lead_name or 'Unknown'}",
             f"Company: {company or 'Unknown'}",
@@ -191,7 +193,8 @@ def build_owner_status_message(
 
     return "\n".join(
         [
-            f"⚡ Lead processed: {status}",
+            f"⚡ Lead processed for {business_label()}: {status}",
+            f"Owner: {owner_label()}",
             "",
             f"Lead: {lead_name or 'Unknown'}",
             f"Company: {company or 'Unknown'}",

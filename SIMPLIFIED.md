@@ -30,7 +30,6 @@ These files tell each agent how to think.
 Important prompt files:
 
 ```text
-prompts/supervisor.md
 prompts/lead_qualifier.md
 prompts/missing_info_detector.md
 prompts/followup_writer.md
@@ -46,13 +45,11 @@ prompts/*.md = how each agent should reason
 
 If the agent's judgment or tone is wrong, check the relevant prompt.
 
-## 3. `agents/supervisor.py`
+## 3. `graph.py`
 
-This is the workflow manager.
+This is the workflow map.
 
-It creates the main supervisor agent and gives it the tools/subagents it can call.
-
-The supervisor owns the order:
+It defines the exact order:
 
 ```text
 load lead
@@ -61,13 +58,14 @@ load lead
 -> draft reply
 -> save CRM note
 -> save artifacts
--> request approval only when the saved send policy says approval_required
+-> auto-send / approval gate / do not send
+-> final summary
 ```
 
 Simple meaning:
 
 ```text
-agents/supervisor.py = who controls the workflow?
+graph.py = what happens first, second, third, and next?
 ```
 
 ## 4. `agents/*.py`
@@ -86,7 +84,7 @@ agents/crm_recorder.py = creates the internal CRM note
 Simple meaning:
 
 ```text
-agents/*.py = specialist workers
+agents/*.py = specialist LLM workers called by workflow_nodes.py
 ```
 
 ## 5. `tools/*.py`
@@ -192,7 +190,7 @@ Current path:
 ```text
 worker.py
 -> claim pending lead_jobs row
--> invoke LangGraph supervisor
+-> invoke explicit LangGraph StateGraph
 -> pause before customer-facing send
 -> read latest Agent_runs decision/draft
 -> send Telegram approval request with draft preview
@@ -365,7 +363,7 @@ trigger
 -> input data
 -> deterministic tools
 -> specialist subagents
--> supervisor
+-> explicit graph orchestration
 -> artifacts
 -> human approval
 -> external action
@@ -383,7 +381,7 @@ AGENT_BUILD_PLAYBOOK.md = how to rebuild this architecture again
 app.py
 -> Airtable lead is created
 -> graph.py exposes the LangGraph app
--> agents/supervisor.py controls the workflow
+-> workflow_nodes.py runs each graph step
 -> tools/lead_storage.py loads the lead
 -> mock_data/agency_profile.json defines qualification rules
 -> prompts/*.md guide agent reasoning
@@ -401,7 +399,7 @@ app.py
 agency_profile.json = what business are we?
 prompts/*.md = how should each specialist think?
 tools/*.py = what can the system actually do?
-agents/supervisor.py = who controls the workflow?
+graph.py = who controls the workflow order?
 app.py = how outside business events enter the system?
 tools/telegram.py = how the owner approves/rejects from Telegram
 outputs/ = proof that the system did the work

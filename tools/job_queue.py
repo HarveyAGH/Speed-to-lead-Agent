@@ -36,7 +36,13 @@ JOB_METRICS_SQL = [
     "ALTER TABLE lead_jobs ADD COLUMN IF NOT EXISTS owner_notified_at TIMESTAMPTZ;",
     "ALTER TABLE lead_jobs ADD COLUMN IF NOT EXISTS first_response_at TIMESTAMPTZ;",
     "ALTER TABLE lead_jobs ADD COLUMN IF NOT EXISTS first_response_status TEXT;",
+    "ALTER TABLE lead_jobs ADD COLUMN IF NOT EXISTS lead_fingerprint TEXT;",
 ]
+
+JOB_FINGERPRINT_INDEX_SQL = """
+CREATE INDEX IF NOT EXISTS idx_lead_jobs_fingerprint
+ON lead_jobs (lead_fingerprint, created_at);
+"""
 
 
 def queue_is_configured() -> bool:
@@ -49,18 +55,24 @@ def setup_job_queue() -> None:
         conn.execute(JOB_INDEX_SQL)
         for statement in JOB_METRICS_SQL:
             conn.execute(statement)
+        conn.execute(JOB_FINGERPRINT_INDEX_SQL)
 
 
-def enqueue_lead_job(lead_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+def enqueue_lead_job(
+    lead_id: str,
+    payload: dict[str, Any],
+    *,
+    lead_fingerprint: str = "",
+) -> dict[str, Any]:
     setup_job_queue()
     with _connect() as conn:
         row = conn.execute(
             """
-            INSERT INTO lead_jobs (lead_id, payload)
-            VALUES (%s, %s::jsonb)
-            RETURNING id, lead_id, status, attempts, max_attempts, created_at;
+            INSERT INTO lead_jobs (lead_id, payload, lead_fingerprint)
+            VALUES (%s, %s::jsonb, NULLIF(%s, ''))
+            RETURNING id, lead_id, status, attempts, max_attempts, lead_fingerprint, created_at;
             """,
-            (lead_id, json.dumps(payload)),
+            (lead_id, json.dumps(payload), lead_fingerprint),
         ).fetchone()
     return dict(row)
 
@@ -87,6 +99,36 @@ def find_active_job_by_lead_id(
             LIMIT 1;
             """,
             (lead_id, stale_after_minutes),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def find_existing_job_by_fingerprint(
+    lead_fingerprint: str,
+) -> dict[str, Any] | None:
+    if not lead_fingerprint:
+        return None
+
+    setup_job_queue()
+    with _connect() as conn:
+        row = conn.execute(
+            """
+            SELECT id, lead_id, status, attempts, max_attempts, last_error, created_at, updated_at
+            FROM lead_jobs
+            WHERE lead_fingerprint = %s
+              AND status IN (
+                'pending',
+                'running',
+                'waiting_approval',
+                'auto_sent',
+                'approved_sent',
+                'succeeded',
+                'not_sent'
+              )
+            ORDER BY created_at DESC
+            LIMIT 1;
+            """,
+            (lead_fingerprint,),
         ).fetchone()
     return dict(row) if row else None
 
