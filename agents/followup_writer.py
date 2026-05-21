@@ -2,21 +2,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from langchain.agents import create_agent
 from langchain.tools import tool
-from langchain.agents.structured_output import ToolStrategy
 
-from agents.common import load_prompt, require_json_text, structured_or_last_message
+from agents.common import build_structured_chain, dump_structured_result, require_json_text
 from schemas.lead import FollowupDraft
 
 
 def build_followup_writer(model: Any):
-    return create_agent(
-        model=model,
-        tools=[],
-        system_prompt=load_prompt("followup_writer.md"),
-        response_format=ToolStrategy(FollowupDraft),
-    )
+    return build_structured_chain(model, "followup_writer.md", FollowupDraft)
 
 
 def build_followup_writer_tool(model: Any):
@@ -34,9 +27,7 @@ def build_followup_writer_tool(model: Any):
         if error:
             return error
 
-        result = followup_writer.invoke(
-            {"messages": [{"role": "user", "content": context_json}]}
-        )
-        return structured_or_last_message(result)
+        result = followup_writer.invoke({"input": context_json})
+        return dump_structured_result(result)
 
     return call_followup_writer_agent

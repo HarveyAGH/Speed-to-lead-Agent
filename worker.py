@@ -127,6 +127,13 @@ def process_one_job() -> dict[str, Any] | None:
             "telegram": telegram_result,
         }
     except Exception as exc:
+        logger.error(
+            "job_failed lead_id=%s job_id=%s error=%s",
+            lead_id,
+            job_id,
+            str(exc),
+            exc_info=True,
+        )
         failure = mark_lead_job_failed(job_id, traceback.format_exc())
         return {
             "job_id": job_id,

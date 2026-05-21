@@ -134,10 +134,6 @@ def _normalize_urgency(model_urgency: Any, timeline: str = "") -> str:
         "within 5 days",
         "5 days",
         "within a week",
-        "this month",
-        "next 2 weeks",
-        "two weeks",
-        "2 weeks",
     )
 
     low_signals = (
@@ -302,57 +298,3 @@ def _derive_send_policy(
         "owner_alert_level": "normal",
         "send_policy_reason": "Default safe first response; no high-risk action detected.",
     }
-
-
-
-
-
-
-def test_normalize_decision_uses_timeline_over_model_urgency_for_this_week():
-    decision = normalize_decision(
-        {
-            "lead_id": "lead_timeline",
-            "classification": "high_intent_sales_call",
-            "fit": "high",
-            "urgency": "same_day",
-            "timeline": "this week",
-            "score": 82,
-            "recommended_next_action": "book_discovery_call",
-        }
-    )
-
-    assert decision["urgency"] == "this_week"
-    assert decision["owner_alert_level"] == "normal"
-
-
-def test_normalize_decision_keeps_same_day_for_explicit_asap_timeline():
-    decision = normalize_decision(
-        {
-            "lead_id": "lead_asap",
-            "classification": "high_intent_sales_call",
-            "fit": "high",
-            "urgency": "this_week",
-            "timeline": "ASAP today",
-            "score": 82,
-            "recommended_next_action": "book_discovery_call",
-        }
-    )
-
-    assert decision["urgency"] == "same_day"
-    assert decision["owner_alert_level"] == "urgent"
-
-
-def test_normalize_decision_falls_back_to_model_urgency_when_timeline_is_unclear():
-    decision = normalize_decision(
-        {
-            "lead_id": "lead_unclear",
-            "classification": "high_intent_sales_call",
-            "fit": "high",
-            "urgency": "this_week",
-            "timeline": "soon",
-            "score": 82,
-            "recommended_next_action": "book_discovery_call",
-        }
-    )
-
-    assert decision["urgency"] == "this_week"

@@ -103,3 +103,71 @@ def test_normalize_decision_clamps_score_and_derives_disqualify_action():
     }
     assert decision["send_policy"] == "approval_required"
     assert decision["response_type"] == "disqualification"
+
+
+def test_normalize_decision_uses_explicit_this_week_timeline_over_model_same_day():
+    decision = normalize_decision(
+        {
+            "lead_id": "lead_timeline",
+            "classification": "high_intent_sales_call",
+            "fit": "high",
+            "urgency": "same_day",
+            "timeline": "this week",
+            "score": 82,
+            "recommended_next_action": "book_discovery_call",
+        }
+    )
+
+    assert decision["urgency"] == "this_week"
+    assert decision["owner_alert_level"] == "normal"
+
+
+def test_normalize_decision_keeps_same_day_for_explicit_asap_timeline():
+    decision = normalize_decision(
+        {
+            "lead_id": "lead_asap",
+            "classification": "high_intent_sales_call",
+            "fit": "high",
+            "urgency": "this_week",
+            "timeline": "ASAP today",
+            "score": 82,
+            "recommended_next_action": "book_discovery_call",
+        }
+    )
+
+    assert decision["urgency"] == "same_day"
+    assert decision["owner_alert_level"] == "urgent"
+
+
+def test_normalize_decision_does_not_force_this_month_to_this_week():
+    decision = normalize_decision(
+        {
+            "lead_id": "lead_this_month",
+            "classification": "high_intent_sales_call",
+            "fit": "high",
+            "urgency": "same_day",
+            "timeline": "this month",
+            "score": 82,
+            "recommended_next_action": "book_discovery_call",
+        }
+    )
+
+    assert decision["urgency"] == "same_day"
+    assert decision["owner_alert_level"] == "urgent"
+
+
+def test_normalize_decision_does_not_force_two_weeks_to_this_week():
+    decision = normalize_decision(
+        {
+            "lead_id": "lead_two_weeks",
+            "classification": "high_intent_sales_call",
+            "fit": "high",
+            "urgency": "low",
+            "timeline": "in 2 weeks",
+            "score": 82,
+            "recommended_next_action": "book_discovery_call",
+        }
+    )
+
+    assert decision["urgency"] == "low"
+    assert decision["owner_alert_level"] == "normal"

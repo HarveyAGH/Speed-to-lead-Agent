@@ -29,7 +29,7 @@ _exit_stack = ExitStack()
 
 
 @lru_cache(maxsize=1)
-def get_checkpointer():
+def _create_checkpointer():
     if not POSTGRES_DB_URI:
         return InMemorySaver()
 
@@ -38,6 +38,14 @@ def get_checkpointer():
     )
     checkpointer.setup()
     return checkpointer
+
+
+def get_checkpointer():
+    try:
+        return _create_checkpointer()
+    except Exception:
+        _create_checkpointer.cache_clear()
+        raise
 
 
 def build_graph():

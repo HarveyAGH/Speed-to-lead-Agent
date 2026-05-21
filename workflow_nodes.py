@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from functools import lru_cache
 from typing import Any, Literal
 
 from langgraph.types import interrupt
@@ -11,17 +12,23 @@ from agents.followup_writer import build_followup_writer
 from agents.lead_qualifier import build_lead_qualifier
 from agents.missing_info_detector import build_missing_info_detector
 
-lead_qualifier_agent = build_lead_qualifier(MODEL)
-missing_info_detector_agent = build_missing_info_detector(MODEL)
-followup_writer_agent = build_followup_writer(MODEL)
-crm_recorder_agent = build_crm_recorder(MODEL)
-
 from state import LeadWorkflowState
 from agents.common import structured_or_last_message
 from tools.crm import save_run_artifacts
 from tools.decision_normalizer import normalize_decision
 from tools.email import write_sent_email_artifact
 from tools.lead_storage import get_agency_profile, load_lead
+from tools.owner_config import get_owner_config
+
+
+@lru_cache(maxsize=1)
+def _get_agents() -> dict[str, Any]:
+    return {
+        "qualifier": build_lead_qualifier(MODEL),
+        "missing": build_missing_info_detector(MODEL),
+        "followup": build_followup_writer(MODEL),
+        "crm": build_crm_recorder(MODEL),
+    }
 
 
 def load_lead_node(state: LeadWorkflowState) -> dict[str, Any]:
@@ -44,15 +51,8 @@ def qualify_node(state: LeadWorkflowState) -> dict[str, Any]:
         "agency_profile": state["agency_profile"],
     }
 
-    result = lead_qualifier_agent.invoke(
-        {
-            "messages": [
-                {
-                    "role": "user",
-                    "content": json.dumps(context, ensure_ascii=False),
-                }
-            ]
-        }
+    result = _get_agents()["qualifier"].invoke(
+        {"input": json.dumps(context, ensure_ascii=False)}
     )
 
     qualification = _extract_structured_dict(result, "lead_qualifier_agent")
@@ -69,15 +69,8 @@ def detect_missing_node(state: LeadWorkflowState) -> dict[str, Any]:
         "agency_profile": state["agency_profile"],
     }
 
-    result = missing_info_detector_agent.invoke(
-        {
-            "messages": [
-                {
-                    "role": "user",
-                    "content": json.dumps(context, ensure_ascii=False),
-                }
-            ]
-        }
+    result = _get_agents()["missing"].invoke(
+        {"input": json.dumps(context, ensure_ascii=False)}
     )
 
     missing_info = _extract_structured_dict(result, "missing_info_detector_agent")
@@ -93,17 +86,11 @@ def draft_followup_node(state: LeadWorkflowState) -> dict[str, Any]:
         "agency_profile": state["agency_profile"],
         "qualification_summary": _qualification_summary(state["qualification"]),
         "missing_info_summary": _missing_info_summary(state["missing_info"]),
+        "owner_config": _owner_draft_context(),
     }
 
-    result = followup_writer_agent.invoke(
-        {
-            "messages": [
-                {
-                    "role": "user",
-                    "content": json.dumps(context, ensure_ascii=False),
-                }
-            ]
-        }
+    result = _get_agents()["followup"].invoke(
+        {"input": json.dumps(context, ensure_ascii=False)}
     )
 
     draft = _extract_structured_dict(result, "followup_writer_agent")
@@ -126,15 +113,8 @@ def save_crm_note_node(state: LeadWorkflowState) -> dict[str, Any]:
         "draft_summary": _draft_summary(state["draft"]),
     }
 
-    result = crm_recorder_agent.invoke(
-        {
-            "messages": [
-                {
-                    "role": "user",
-                    "content": json.dumps(context, ensure_ascii=False),
-                }
-            ]
-        }
+    result = _get_agents()["crm"].invoke(
+        {"input": json.dumps(context, ensure_ascii=False)}
     )
 
     crm_note = _extract_structured_dict(result, "crm_recorder_agent")
@@ -310,6 +290,12 @@ def route_after_approval(
 
 
 def _extract_structured_dict(result: Any, source_name: str) -> dict[str, Any]:
+    if hasattr(result, "model_dump"):
+        return result.model_dump()
+
+    if isinstance(result, dict) and "structured_response" not in result and "messages" not in result:
+        return result
+
     structured = result.get("structured_response") if isinstance(result, dict) else None
 
     if structured is not None:
@@ -402,6 +388,17 @@ def _compact_value(value: Any, *, limit: int = 1200) -> Any:
         return text
 
     return f"{text[:limit].rstrip()}...[truncated]"
+
+
+def _owner_draft_context() -> dict[str, Any]:
+    owner_config = get_owner_config()
+    return {
+        "sender_name": owner_config.get("sender_name", ""),
+        "sender_title": owner_config.get("sender_title", ""),
+        "business_name": owner_config.get("business_name", ""),
+        "discovery_call_url": owner_config.get("discovery_call_url", ""),
+        "timezone": owner_config.get("timezone", ""),
+    }
 
 
 def _require_non_empty_fields(

@@ -3,6 +3,7 @@
   "business_name": "Northstar Growth Studio",
   "sender_name": "Alex Rivera",
   "sender_title": "Owner",
+  "discovery_call_url": "https://cal.com/snowaflic/discovery-call",
   "timezone": "Asia/Manila",
   "approval_channel": "telegram",
   "approval_policy_note": "Auto-send safe first responses only when no pricing promise, discount, legal commitment, or uncertain qualification is present. Ask the owner to approve anything higher risk."

@@ -32,10 +32,18 @@ else:
     )
 
 
-
-MODEL: Any = llm
+MODEL: Any = llm.with_retry(
+    stop_after_attempt=3,
+    wait_exponential_jitter=True,
+)
 OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", str(PROJECT_ROOT / "outputs")))
 MOCK_DATA_DIR = Path(os.getenv("MOCK_DATA_DIR", str(PROJECT_ROOT / "mock_data")))
+AGENCY_PROFILE_PATH = Path(
+    os.getenv(
+        "AGENCY_PROFILE_PATH",
+        str(MOCK_DATA_DIR / "agency_profile.json"),
+    )
+)
 PROMPT_DIR = Path(os.getenv("PROMPT_DIR", str(PROJECT_ROOT / "prompts")))
 OWNER_CONFIG_PATH = Path(
     os.getenv(
@@ -58,3 +66,4 @@ POSTGRES_DB_URI = os.getenv("POSTGRES_DB_URI", "")
 MAX_WEBHOOK_BODY_BYTES = int(os.getenv("MAX_WEBHOOK_BODY_BYTES", "262144"))
 RATE_LIMIT_REQUESTS = int(os.getenv("RATE_LIMIT_REQUESTS", "60"))
 RATE_LIMIT_WINDOW_SECONDS = int(os.getenv("RATE_LIMIT_WINDOW_SECONDS", "60"))
+STALE_JOB_MINUTES = int(os.getenv("STALE_JOB_MINUTES", "10"))

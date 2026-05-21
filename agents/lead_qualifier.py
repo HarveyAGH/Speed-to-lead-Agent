@@ -2,21 +2,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from langchain.agents import create_agent
 from langchain.tools import tool
-from langchain.agents.structured_output import ToolStrategy
 
-from agents.common import load_prompt, require_json_text, structured_or_last_message
+from agents.common import build_structured_chain, dump_structured_result, require_json_text
 from schemas.lead import LeadQualificationReport
 
 
 def build_lead_qualifier(model: Any):
-    return create_agent(
-        model=model,
-        tools=[],
-        system_prompt=load_prompt("lead_qualifier.md"),
-        response_format=ToolStrategy(LeadQualificationReport),
-    )
+    return build_structured_chain(model, "lead_qualifier.md", LeadQualificationReport)
 
 
 def build_lead_qualifier_tool(model: Any):
@@ -34,9 +27,7 @@ def build_lead_qualifier_tool(model: Any):
         if error:
             return error
 
-        result = lead_qualifier.invoke(
-            {"messages": [{"role": "user", "content": lead_submission_json}]}
-        )
-        return structured_or_last_message(result)
+        result = lead_qualifier.invoke({"input": lead_submission_json})
+        return dump_structured_result(result)
 
     return call_lead_qualifier_agent

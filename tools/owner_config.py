@@ -12,6 +12,7 @@ DEFAULT_OWNER_CONFIG: dict[str, Any] = {
     "business_name": "Speed-to-Lead Demo",
     "sender_name": "Alex Rivera",
     "sender_title": "Owner",
+    "discovery_call_url": "",
     "timezone": "Asia/Manila",
     "approval_channel": "telegram",
     "approval_policy_note": (

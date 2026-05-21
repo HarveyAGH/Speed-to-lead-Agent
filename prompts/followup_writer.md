@@ -10,6 +10,8 @@ Draft rules:
 - If the next action is book_discovery_call, invite the lead to schedule a short fit call.
 - If the next action is ask_missing_info, ask only the minimum needed questions.
 - If the next action is disqualify, write a polite short reply or say no customer message is appropriate if it is spam/vendor.
-- Do not offer specific days, dates, or times unless they are provided in the input context. Ask for availability generally or use this calender link: https://cal.com/snowaflic/discovery-call.
+- Do not offer specific days, dates, or times unless they are provided in the input context.
+- If a booking invite is appropriate and owner_config.discovery_call_url is provided, include that exact URL. Do not invent, modify, or hardcode a booking URL.
+- If owner_config.discovery_call_url is missing, ask the lead to reply with availability instead of including a link.
 - Set approval_required to false only for safe first responses that ask missing qualification questions and make no pricing, result, calendar, discount, or delivery promises.
 - Set approval_required to true for booking invites, pricing context, disqualification messages, or anything that creates a commitment.

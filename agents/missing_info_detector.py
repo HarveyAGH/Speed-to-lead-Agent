@@ -2,21 +2,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from langchain.agents import create_agent
 from langchain.tools import tool
-from langchain.agents.structured_output import ToolStrategy
 
-from agents.common import load_prompt, require_json_text, structured_or_last_message
+from agents.common import build_structured_chain, dump_structured_result, require_json_text
 from schemas.lead import MissingInfoReport
 
 
 def build_missing_info_detector(model: Any):
-    return create_agent(
-        model=model,
-        tools=[],
-        system_prompt=load_prompt("missing_info_detector.md"),
-        response_format=ToolStrategy(MissingInfoReport),
-    )
+    return build_structured_chain(model, "missing_info_detector.md", MissingInfoReport)
 
 
 def build_missing_info_detector_tool(model: Any):
@@ -34,9 +27,7 @@ def build_missing_info_detector_tool(model: Any):
         if error:
             return error
 
-        result = missing_info_detector.invoke(
-            {"messages": [{"role": "user", "content": lead_submission_json}]}
-        )
-        return structured_or_last_message(result)
+        result = missing_info_detector.invoke({"input": lead_submission_json})
+        return dump_structured_result(result)
 
     return call_missing_info_detector_agent

@@ -5,7 +5,7 @@ from pathlib import Path
 
 from langchain.tools import tool
 
-from config import MOCK_DATA_DIR
+from config import AGENCY_PROFILE_PATH, MOCK_DATA_DIR
 from tools.airtable_client import airtable_is_configured, find_lead_by_id
 
 
@@ -76,4 +76,4 @@ def load_lead(lead_id: str) -> str:
 
 @tool("get_agency_profile", description="Return the demo agency profile and qualification rules.")
 def get_agency_profile() -> str:
-    return json.dumps(_read_json(MOCK_DATA_DIR / "agency_profile.json"), indent=2)
+    return json.dumps(_read_json(AGENCY_PROFILE_PATH), indent=2)

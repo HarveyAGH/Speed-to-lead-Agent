@@ -3,21 +3,14 @@ from __future__ import annotations
 from typing import Any
 
 
-from langchain.agents import create_agent
 from langchain.tools import tool
-from langchain.agents.structured_output import ToolStrategy
 
-from agents.common import load_prompt, require_json_text, structured_or_last_message
+from agents.common import build_structured_chain, dump_structured_result, require_json_text
 from schemas.lead import CrmNoteReport
 
 
 def build_crm_recorder(model: Any):
-    return create_agent(
-        model=model,
-        tools=[],
-        system_prompt=load_prompt("crm_recorder.md"),
-        response_format=ToolStrategy(CrmNoteReport),
-    )
+    return build_structured_chain(model, "crm_recorder.md", CrmNoteReport)
 
 
 def build_crm_recorder_tool(model: Any):
@@ -35,9 +28,7 @@ def build_crm_recorder_tool(model: Any):
         if error:
             return error
 
-        result = crm_recorder.invoke(
-            {"messages": [{"role": "user", "content": context_json}]}
-        )
-        return structured_or_last_message(result)
+        result = crm_recorder.invoke({"input": context_json})
+        return dump_structured_result(result)
 
     return call_crm_recorder_agent

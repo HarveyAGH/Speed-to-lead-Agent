@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import hashlib
 import logging
-import re
 from collections import defaultdict, deque
 from time import monotonic
 from typing import Any
@@ -22,15 +20,11 @@ from config import (
 from langgraph.types import Command
 from tools.airtable_client import (
     airtable_is_configured,
-    create_lead,
-    find_lead_by_id,
     find_latest_agent_run_by_lead_id,
     update_latest_agent_run_status,
 )
+from tools.lead_ingestion import build_lead_fingerprint, ingest_lead
 from tools.job_queue import (
-    enqueue_lead_job,
-    find_active_job_by_lead_id,
-    find_existing_job_by_fingerprint,
     list_recent_jobs,
     mark_latest_waiting_job_resolved,
     queue_is_configured,
@@ -53,6 +47,8 @@ logger = logging.getLogger("lead_api")
 @app.middleware("http")
 async def request_guardrails(request: Request, call_next):
     if request.method == "POST" and _is_guarded_path(request.url.path):
+        # Advisory only: chunked requests can omit content-length. Enforce the
+        # same body-size limit at the reverse proxy before production deploy.
         content_length = request.headers.get("content-length")
         if (
             content_length
@@ -106,81 +102,21 @@ def tally_webhook(
         raise HTTPException(status_code=401, detail="Invalid webhook secret")
 
     lead = normalize_lead_payload(payload)
-    if not airtable_is_configured():
-        raise HTTPException(status_code=500, detail="Airtable is not configured")
-    if not queue_is_configured():
-        raise HTTPException(status_code=500, detail="POSTGRES_DB_URI is required for queued processing")
-
-    existing_lead = find_lead_by_id(lead["lead_id"])
-    existing_run = _latest_agent_run_fields(lead["lead_id"]) if existing_lead else {}
-    if existing_run:
-        logger.info(
-            "tally_webhook status=duplicate_ignored lead_id=%s reason=existing_agent_run",
-            lead["lead_id"],
+    result = ingest_lead(lead)
+    if result.get("status") == "error":
+        raise HTTPException(
+            status_code=int(result.get("http_status") or 500),
+            detail=str(result.get("error") or "Lead ingestion failed"),
         )
-        return {
-            "status": "duplicate_ignored",
-            "lead_id": lead["lead_id"],
-            "reason": "Lead already has a saved agent run; skipped reprocessing and Telegram notification.",
-            "airtable_record": existing_lead,
-        }
 
-    lead_fingerprint = build_lead_fingerprint(lead)
-    duplicate_job = find_existing_job_by_fingerprint(lead_fingerprint)
-    if duplicate_job and duplicate_job["lead_id"] != lead["lead_id"]:
-        logger.info(
-            "tally_webhook status=duplicate_fingerprint_ignored lead_id=%s duplicate_of=%s",
-            lead["lead_id"],
-            duplicate_job.get("lead_id"),
-        )
-        return {
-            "status": "duplicate_fingerprint_ignored",
-            "lead_id": lead["lead_id"],
-            "reason": (
-                "A lead with the same email/company/message fingerprint was already "
-                "queued or processed."
-            ),
-            "duplicate_of": duplicate_job,
-        }
-
-    active_job = find_active_job_by_lead_id(lead["lead_id"])
-    if active_job:
-        logger.info(
-            "tally_webhook status=duplicate_queued lead_id=%s job_id=%s",
-            lead["lead_id"],
-            active_job.get("id"),
-        )
-        return {
-            "status": "duplicate_queued",
-            "lead_id": lead["lead_id"],
-            "reason": "Lead already has a pending or running queue job.",
-            "job": active_job,
-            "airtable_record": existing_lead,
-        }
-
-    airtable_response = (
-        {"existing_record": existing_lead}
-        if existing_lead
-        else create_lead(_airtable_lead_fields(lead))
-    )
-
-    job = enqueue_lead_job(
-        lead["lead_id"],
-        lead,
-        lead_fingerprint=lead_fingerprint,
-    )
     logger.info(
-        "tally_webhook status=queued lead_id=%s job_id=%s",
+        "tally_webhook status=%s lead_id=%s job_id=%s duplicate_of=%s",
+        result.get("status"),
         lead["lead_id"],
-        job.get("id"),
+        (result.get("job") or {}).get("id"),
+        (result.get("duplicate_of") or {}).get("lead_id"),
     )
-
-    return {
-        "status": "queued",
-        "lead_id": lead["lead_id"],
-        "airtable_record": airtable_response,
-        "job": job,
-    }
+    return result
 
 
 @app.post("/approval/{lead_id}/approve")
@@ -318,23 +254,6 @@ def normalize_lead_payload(payload: dict[str, Any]) -> dict[str, str]:
     }
 
 
-def build_lead_fingerprint(lead: dict[str, str]) -> str:
-    """Build a stable duplicate key from the human/business content of a lead."""
-    parts = [
-        lead.get("email", ""),
-        lead.get("company", ""),
-        lead.get("service_interest", ""),
-        lead.get("message", ""),
-        lead.get("website", ""),
-    ]
-    normalized = "|".join(_normalize_fingerprint_part(part) for part in parts)
-    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
-
-
-def _normalize_fingerprint_part(value: Any) -> str:
-    return re.sub(r"\s+", " ", str(value or "").strip().lower())
-
-
 def _extract_tally_fields(payload: dict[str, Any]) -> dict[str, Any]:
     data = payload.get("data") or {}
     raw_fields = data.get("fields") or []
@@ -383,10 +302,6 @@ def _normalize_field_name(name: Any) -> str:
         "status": "status",
     }
     return aliases.get(normalized, "")
-
-
-def _airtable_lead_fields(lead: dict[str, str]) -> dict[str, str]:
-    return {key: value for key, value in lead.items() if value != ""}
 
 
 def _sanitize_lead_value(value: Any, limit: int) -> str:

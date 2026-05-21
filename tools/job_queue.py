@@ -7,10 +7,10 @@ from typing import Any
 import psycopg
 from psycopg.rows import dict_row
 
-from config import POSTGRES_DB_URI
+from config import POSTGRES_DB_URI, STALE_JOB_MINUTES
 
 
-STALE_RUNNING_MINUTES = 10
+STALE_RUNNING_MINUTES = STALE_JOB_MINUTES
 _queue_setup_lock = Lock()
 _queue_setup_done = False
 

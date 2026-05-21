@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 import json
+from typing import Any
 
 from config import PROMPT_DIR
+from langchain_core.prompts import ChatPromptTemplate
 
 
 def load_prompt(name: str) -> str:
@@ -33,3 +35,28 @@ def require_json_text(value: str, field_name: str) -> str | None:
             indent=2,
         )
     return None
+
+
+def build_structured_chain(model: Any, prompt_name: str, schema: type[Any]):
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            ("system", load_prompt(prompt_name)),
+            ("human", "{input}"),
+        ]
+    )
+    base_model = getattr(model, "bound", model)
+    structured_model = base_model.with_structured_output(schema)
+    return (prompt | structured_model).with_retry(
+        stop_after_attempt=3,
+        wait_exponential_jitter=True,
+    )
+
+
+def dump_structured_result(result: Any) -> str:
+    if hasattr(result, "model_dump_json"):
+        return result.model_dump_json(indent=2)
+    if hasattr(result, "model_dump"):
+        return json.dumps(result.model_dump(), indent=2)
+    if isinstance(result, dict):
+        return json.dumps(result, indent=2)
+    return str(result)
