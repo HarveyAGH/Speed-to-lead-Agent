@@ -36,6 +36,7 @@ ON lead_jobs (status, created_at);
 """
 
 JOB_METRICS_SQL = [
+    "ALTER TABLE lead_jobs ADD COLUMN IF NOT EXISTS job_type TEXT NOT NULL DEFAULT 'form_intake';",
     "ALTER TABLE lead_jobs ADD COLUMN IF NOT EXISTS owner_notified_at TIMESTAMPTZ;",
     "ALTER TABLE lead_jobs ADD COLUMN IF NOT EXISTS first_response_at TIMESTAMPTZ;",
     "ALTER TABLE lead_jobs ADD COLUMN IF NOT EXISTS first_response_status TEXT;",
@@ -77,16 +78,17 @@ def enqueue_lead_job(
     payload: dict[str, Any],
     *,
     lead_fingerprint: str = "",
+    job_type: str = "form_intake",
 ) -> dict[str, Any]:
     setup_job_queue()
     with _connect() as conn:
         row = conn.execute(
             """
-            INSERT INTO lead_jobs (lead_id, payload, lead_fingerprint)
-            VALUES (%s, %s::jsonb, NULLIF(%s, ''))
-            RETURNING id, lead_id, status, attempts, max_attempts, lead_fingerprint, created_at;
+            INSERT INTO lead_jobs (lead_id, payload, lead_fingerprint, job_type)
+            VALUES (%s, %s::jsonb, NULLIF(%s, ''), %s)
+            RETURNING id, lead_id, status, attempts, max_attempts, lead_fingerprint, job_type, created_at;
             """,
-            (lead_id, json.dumps(payload), lead_fingerprint),
+            (lead_id, json.dumps(payload), lead_fingerprint, job_type),
         ).fetchone()
     return dict(row)
 
@@ -154,7 +156,7 @@ def claim_next_lead_job() -> dict[str, Any] | None:
         with conn.transaction():
             row = conn.execute(
                 """
-                SELECT id, lead_id, payload, attempts, max_attempts
+                SELECT id, lead_id, payload, attempts, max_attempts, job_type
                 FROM lead_jobs
                 WHERE status = 'pending'
                   AND attempts < max_attempts
@@ -175,7 +177,7 @@ def claim_next_lead_job() -> dict[str, Any] | None:
                     started_at = now(),
                     updated_at = now()
                 WHERE id = %s
-                RETURNING id, lead_id, payload, attempts, max_attempts;
+                RETURNING id, lead_id, payload, attempts, max_attempts, job_type;
                 """,
                 (row["id"],),
             ).fetchone()
@@ -334,6 +336,7 @@ def list_recent_jobs(limit: int = 10) -> list[dict[str, Any]]:
             SELECT
                 id,
                 lead_id,
+                job_type,
                 status,
                 attempts,
                 max_attempts,

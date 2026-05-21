@@ -60,6 +60,10 @@ WEBHOOK_SHARED_SECRET = os.getenv("WEBHOOK_SHARED_SECRET", "")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_OWNER_CHAT_ID = os.getenv("TELEGRAM_OWNER_CHAT_ID", "")
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
+TELEGRAM_ALLOW_OWNER_AS_LEAD = (
+    os.getenv("TELEGRAM_ALLOW_OWNER_AS_LEAD", "").strip().lower()
+    in {"1", "true", "yes", "on"}
+)
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "")
 POSTGRES_DB_URI = os.getenv("POSTGRES_DB_URI", "")
 

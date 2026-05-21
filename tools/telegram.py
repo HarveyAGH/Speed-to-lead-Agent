@@ -124,6 +124,47 @@ def send_owner_status_notification(
     )
 
 
+def send_owner_channel_escalation(
+    *,
+    lead_id: str,
+    source_channel: str,
+    sender_name: str,
+    channel_user_id: str,
+    owner_summary: str,
+    qualification_summary: str,
+    fit: str,
+    urgency: str,
+    score: int | float | str,
+    extracted_profile: dict[str, Any],
+    transcript: list[dict[str, Any]],
+) -> dict[str, Any]:
+    if not telegram_is_configured():
+        return {"configured": False}
+
+    text = build_owner_channel_escalation_message(
+        lead_id=lead_id,
+        source_channel=source_channel,
+        sender_name=sender_name,
+        channel_user_id=channel_user_id,
+        owner_summary=owner_summary,
+        qualification_summary=qualification_summary,
+        fit=fit,
+        urgency=urgency,
+        score=score,
+        extracted_profile=extracted_profile,
+        transcript=transcript,
+    )
+
+    return _telegram_request(
+        "sendMessage",
+        {
+            "chat_id": TELEGRAM_OWNER_CHAT_ID,
+            "text": text,
+            "disable_web_page_preview": True,
+        },
+    )
+
+
 def build_owner_approval_message(
     lead_id: str,
     lead_name: str,
@@ -168,6 +209,62 @@ def build_owner_approval_message(
             draft_preview,
             "",
             "Tap Approve or Reject below.",
+        ]
+    )
+
+
+def build_owner_channel_escalation_message(
+    *,
+    lead_id: str,
+    source_channel: str,
+    sender_name: str,
+    channel_user_id: str,
+    owner_summary: str,
+    qualification_summary: str,
+    fit: str,
+    urgency: str,
+    score: int | float | str,
+    extracted_profile: dict[str, Any],
+    transcript: list[dict[str, Any]],
+) -> str:
+    profile_lines = [
+        f"- {key}: {value}"
+        for key, value in sorted(extracted_profile.items())
+        if value
+    ]
+    transcript_lines = [
+        f"{str(item.get('role', 'unknown')).title()}: {item.get('content', '')}"
+        for item in transcript[-8:]
+    ]
+
+    return "\n".join(
+        [
+            f"🔥 Qualified messaging lead for {business_label()}",
+            f"Owner: {owner_label()}",
+            "",
+            f"Lead ID: {lead_id}",
+            f"Channel: {source_channel}",
+            f"Sender: {sender_name or 'Unknown'}",
+            f"Channel user id: {channel_user_id}",
+            "",
+            "📌 Decision snapshot",
+            f"- Fit: {fit or 'unknown'}",
+            f"- Urgency: {urgency or 'unknown'}",
+            f"- Score: {score if score != '' else 'not scored'}",
+            "",
+            "🧾 Owner summary",
+            owner_summary or "The conversation needs owner review.",
+            "",
+            "🎯 Qualification summary",
+            qualification_summary or "No qualification summary was returned.",
+            "",
+            "👤 Extracted profile",
+            "\n".join(profile_lines) if profile_lines else "No profile fields extracted yet.",
+            "",
+            "💬 Recent transcript",
+            _truncate("\n".join(transcript_lines), limit=1500)
+            if transcript_lines
+            else "No transcript found.",
         ]
     )
 

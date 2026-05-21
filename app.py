@@ -14,6 +14,7 @@ from config import (
     MAX_WEBHOOK_BODY_BYTES,
     RATE_LIMIT_REQUESTS,
     RATE_LIMIT_WINDOW_SECONDS,
+    TELEGRAM_ALLOW_OWNER_AS_LEAD,
     TELEGRAM_WEBHOOK_SECRET,
     WEBHOOK_SHARED_SECRET,
 )
@@ -166,7 +167,7 @@ def telegram_webhook(
         chat = message.get("chat") or {}
         from_user = message.get("from") or {}
         chat_id = str(chat.get("id") or from_user.get("id") or "")
-        if chat_id and not is_owner_chat(chat_id):
+        if chat_id and (TELEGRAM_ALLOW_OWNER_AS_LEAD or not is_owner_chat(chat_id)):
             result = handle_telegram_lead_message(message)
             logger.info(
                 "telegram_lead_update status=%s lead_id=%s",
@@ -175,7 +176,7 @@ def telegram_webhook(
             )
             return {"ok": True, "lead_intake": result}
 
-        return {"ok": True, "ignored": "owner_or_missing_chat"}
+        return {"ok": True, "ignored": "owner_chat_or_missing_chat"}
 
     return {"ok": True, "ignored": "unsupported_telegram_update"}
 

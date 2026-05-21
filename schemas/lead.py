@@ -97,3 +97,32 @@ class SupervisorDecision(BaseModel):
     explanation_for_owner: str
     evidence_summary: list[str]
 
+
+ChannelConversationStatus = Literal[
+    "continue_conversation",
+    "qualified_escalate",
+    "not_fit_close",
+    "needs_human",
+]
+
+ChannelNextAction = Literal[
+    "ask_followup_question",
+    "handoff_to_owner",
+    "close_not_fit",
+    "needs_manual_review",
+]
+
+
+class ChannelConversationDecision(BaseModel):
+    lead_id: str
+    conversation_status: ChannelConversationStatus
+    reply_text: str
+    extracted_profile: dict[str, str] = Field(default_factory=dict)
+    missing_fields: list[str] = Field(default_factory=list)
+    fit: FitLevel
+    urgency: UrgencyLevel
+    score: int = Field(ge=0, le=100)
+    recommended_next_action: ChannelNextAction
+    qualification_summary: str
+    owner_escalation_required: bool
+    owner_summary: str

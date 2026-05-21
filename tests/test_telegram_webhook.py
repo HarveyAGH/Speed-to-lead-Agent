@@ -21,13 +21,49 @@ def test_telegram_webhook_rejects_invalid_secret(monkeypatch):
 
 def test_telegram_webhook_ignores_non_callback_update_without_secret(monkeypatch):
     monkeypatch.setattr(app, "TELEGRAM_WEBHOOK_SECRET", "")
+    monkeypatch.setattr(app, "TELEGRAM_ALLOW_OWNER_AS_LEAD", False)
 
     result = app.telegram_webhook(
         {"message": {"text": "hello"}},
         x_telegram_bot_api_secret_token=None,
     )
 
-    assert result == {"ok": True, "ignored": "owner_or_missing_chat"}
+    assert result == {"ok": True, "ignored": "owner_chat_or_missing_chat"}
+
+
+def test_telegram_webhook_allows_owner_as_lead_when_test_flag_enabled(monkeypatch):
+    monkeypatch.setattr(app, "TELEGRAM_WEBHOOK_SECRET", "")
+    monkeypatch.setattr(app, "TELEGRAM_ALLOW_OWNER_AS_LEAD", True)
+
+    def fake_handle(message):
+        return {"lead_id": "tg_test", "status": "queued"}
+
+    monkeypatch.setattr(
+        "channels.telegram_leads.adapter.handle_telegram_lead_message",
+        fake_handle,
+    )
+    monkeypatch.setattr(
+        "channels.telegram_leads.adapter.is_owner_chat",
+        lambda chat_id: True,
+    )
+
+    result = app.telegram_webhook(
+        {
+            "message": {
+                "text": "I need faster lead response",
+                "chat": {"id": 123},
+                "from": {"id": 123},
+            }
+        },
+        x_telegram_bot_api_secret_token=None,
+    )
+
+    assert result == {
+        "ok": True,
+        "lead_intake": {"lead_id": "tg_test", "status": "queued"},
+    }
+
+
 
 
 def test_telegram_webhook_ignores_duplicate_final_status(monkeypatch):

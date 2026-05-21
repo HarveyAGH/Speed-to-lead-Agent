@@ -1,6 +1,6 @@
 # WhatsApp Channel
 
-This adapter receives WhatsApp Cloud API webhook messages and turns each inbound text into the same lead payload used by the Tally webhook.
+This adapter receives WhatsApp Cloud API webhook messages and routes inbound text into the dedicated channel conversation workflow. WhatsApp is treated as a live conversation channel, not as a form submission.
 
 ## Environment
 
@@ -24,11 +24,8 @@ WHATSAPP_APP_SECRET=
 
 1. Meta sends the inbound message to `POST /whatsapp/webhook`.
 2. `channels.whatsapp.adapter` extracts the phone number and text.
-3. The message is normalized into a lead with:
-   - `source = whatsapp`
-   - `source_channel = whatsapp`
-   - `channel_user_id = <sender phone number>`
-4. `tools.lead_ingestion.ingest_lead()` writes the CRM lead and queues the job.
-5. The worker processes the job.
-6. If policy allows auto-send, `channels.channel_dispatcher` sends the drafted reply back to WhatsApp.
-7. If approval is required, the owner approves in Telegram and the approved draft is sent back to WhatsApp.
+3. `tools.channel_intake.ingest_channel_message()` stores the message in `channel_conversations` / `channel_messages`.
+4. The same function queues a `job_type=channel_message` job.
+5. `worker.py` routes that job to the dedicated speed-to-lead chat agent.
+6. The chat agent sends a short channel-native reply back to WhatsApp.
+7. If the lead is qualified or needs human judgment, the owner receives a Telegram summary with extracted profile fields and recent transcript.

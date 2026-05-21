@@ -5,15 +5,24 @@ import json
 import logging
 import time
 import traceback
+from functools import lru_cache
 from typing import Any
 
 from langgraph.errors import GraphInterrupt
 
 from channels.channel_dispatcher import dispatch_lead_response
+from agents.speed_to_lead_chat import build_speed_to_lead_chat
 from app import (
     _latest_agent_run_fields,
     _owner_summary_from_run,
     run_approval_workflow_status,
+)
+from config import MODEL
+from tools.channel_conversations import (
+    append_channel_message,
+    get_conversation_context,
+    setup_channel_conversations,
+    update_conversation_state,
 )
 from tools.job_queue import (
     claim_next_lead_job,
@@ -26,10 +35,21 @@ from tools.job_queue import (
     setup_job_queue,
 )
 from tools.airtable_client import update_latest_agent_run_status
-from tools.telegram import send_owner_approval_request, send_owner_status_notification
+from tools.lead_storage import get_agency_profile
+from tools.owner_config import get_owner_config
+from tools.telegram import (
+    send_owner_approval_request,
+    send_owner_channel_escalation,
+    send_owner_status_notification,
+)
 
 
 logger = logging.getLogger("lead_worker")
+
+
+@lru_cache(maxsize=1)
+def _channel_chat_agent():
+    return build_speed_to_lead_chat(MODEL)
 
 
 def process_one_job() -> dict[str, Any] | None:
@@ -39,9 +59,13 @@ def process_one_job() -> dict[str, Any] | None:
 
     job_id = job["id"]
     lead_id = job["lead_id"]
+    job_type = str(job.get("job_type") or "form_intake")
     payload = dict(job.get("payload") or {})
     source_channel = str(payload.get("source_channel") or "")
     channel_user_id = str(payload.get("channel_user_id") or "")
+
+    if job_type == "channel_message":
+        return process_channel_message_job(job)
 
     try:
         telegram_result = None
@@ -140,6 +164,7 @@ def process_one_job() -> dict[str, Any] | None:
         return {
             "job_id": job_id,
             "lead_id": lead_id,
+            "job_type": job_type,
             "status": workflow_status,
             "summary": workflow_summary,
             "send_policy": send_policy,
@@ -160,6 +185,129 @@ def process_one_job() -> dict[str, Any] | None:
         return {
             "job_id": job_id,
             "lead_id": lead_id,
+            "job_type": job_type,
+            "status": "failed_or_requeued",
+            "error": str(exc),
+            "queue": failure,
+        }
+
+
+def process_channel_message_job(job: dict[str, Any]) -> dict[str, Any]:
+    job_id = job["id"]
+    lead_id = job["lead_id"]
+    payload = dict(job.get("payload") or {})
+    source_channel = str(payload.get("source_channel") or "")
+    channel_user_id = str(payload.get("channel_user_id") or "")
+    sender_name = str(payload.get("sender_name") or "")
+
+    try:
+        context = get_conversation_context(
+            source_channel=source_channel,
+            channel_user_id=channel_user_id,
+        )
+        if not context:
+            raise RuntimeError(
+                f"No channel conversation found for {source_channel}:{channel_user_id}"
+            )
+
+        agent_context = {
+            "lead_id": lead_id,
+            "source_channel": source_channel,
+            "channel_user_id": channel_user_id,
+            "sender_name": sender_name,
+            "conversation_status": context.get("status"),
+            "existing_extracted_profile": context.get("extracted_profile") or {},
+            "recent_messages": _message_context(context.get("messages", [])),
+            "agency_profile": json.loads(get_agency_profile.invoke({})),
+            "owner_config": get_owner_config(),
+        }
+        decision_model = _channel_chat_agent().invoke(
+            {"input": json.dumps(agent_context, ensure_ascii=False)}
+        )
+        decision = decision_model.model_dump()
+
+        append_channel_message(
+            conversation_id=int(context["id"]),
+            role="assistant",
+            content=str(decision.get("reply_text") or ""),
+        )
+
+        dispatch_result = dispatch_lead_response(
+            source_channel=source_channel,
+            channel_user_id=channel_user_id,
+            subject="",
+            body=str(decision.get("reply_text") or ""),
+        )
+        if dispatch_result.get("ok") is False:
+            raise RuntimeError(f"Channel reply dispatch failed: {dispatch_result}")
+
+        owner_escalation_required = bool(decision.get("owner_escalation_required"))
+        updated_conversation = update_conversation_state(
+            conversation_id=int(context["id"]),
+            extracted_profile=dict(decision.get("extracted_profile") or {}),
+            status=str(decision.get("conversation_status") or "continue_conversation"),
+            owner_escalated=owner_escalation_required,
+        )
+
+        owner_notification = None
+        if owner_escalation_required:
+            owner_notification = send_owner_channel_escalation(
+                lead_id=lead_id,
+                source_channel=source_channel,
+                sender_name=sender_name,
+                channel_user_id=channel_user_id,
+                owner_summary=str(decision.get("owner_summary") or ""),
+                qualification_summary=str(decision.get("qualification_summary") or ""),
+                fit=str(decision.get("fit") or ""),
+                urgency=str(decision.get("urgency") or ""),
+                score=decision.get("score", ""),
+                extracted_profile=dict(decision.get("extracted_profile") or {}),
+                transcript=_message_context(context.get("messages", []))
+                + [{"role": "assistant", "content": str(decision.get("reply_text") or "")}],
+            )
+            if not _notification_delivered(owner_notification):
+                raise RuntimeError(
+                    "Owner escalation required, but Telegram notification failed: "
+                    f"{owner_notification}"
+                )
+
+        completion_status = _channel_completion_status(decision)
+        mark_lead_job_completed(
+            job_id,
+            completion_status,
+            first_response=True,
+        )
+
+        return {
+            "job_id": job_id,
+            "lead_id": lead_id,
+            "job_type": "channel_message",
+            "status": completion_status,
+            "conversation_status": updated_conversation.get("status"),
+            "source_channel": source_channel,
+            "channel_dispatch": dispatch_result,
+            "owner_notification": owner_notification,
+            "decision": {
+                "conversation_status": decision.get("conversation_status"),
+                "fit": decision.get("fit"),
+                "urgency": decision.get("urgency"),
+                "score": decision.get("score"),
+                "owner_escalation_required": owner_escalation_required,
+            },
+        }
+    except Exception as exc:
+        logger.error(
+            "channel_job_failed lead_id=%s job_id=%s error=%s",
+            lead_id,
+            job_id,
+            str(exc),
+            exc_info=True,
+        )
+        failure = mark_lead_job_failed(job_id, traceback.format_exc())
+        return {
+            "job_id": job_id,
+            "lead_id": lead_id,
+            "job_type": "channel_message",
             "status": "failed_or_requeued",
             "error": str(exc),
             "queue": failure,
@@ -168,6 +316,7 @@ def process_one_job() -> dict[str, Any] | None:
 
 def run_worker(poll_interval: float) -> None:
     setup_job_queue()
+    setup_channel_conversations()
     recover_stale_running_jobs()
     logger.info("Lead worker started. Waiting for queued jobs.")
     while True:
@@ -191,6 +340,28 @@ def _completion_status_from_state(
     if final_status == "not_sent":
         return "not_sent"
     return "succeeded"
+
+
+def _channel_completion_status(decision: dict[str, Any]) -> str:
+    status = str(decision.get("conversation_status") or "")
+    if status == "qualified_escalate":
+        return "owner_escalated"
+    if status == "not_fit_close":
+        return "conversation_closed"
+    if status == "needs_human":
+        return "needs_human"
+    return "conversation_replied"
+
+
+def _message_context(messages: list[dict[str, Any]]) -> list[dict[str, str]]:
+    return [
+        {
+            "role": str(message.get("role") or ""),
+            "content": str(message.get("content") or ""),
+        }
+        for message in messages
+        if message.get("content")
+    ]
 
 
 def _dispatch_auto_send_response(
@@ -272,6 +443,7 @@ def main() -> int:
     args = parser.parse_args()
 
     setup_job_queue()
+    setup_channel_conversations()
 
     if args.list:
         for job in list_recent_jobs():

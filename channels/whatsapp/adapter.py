@@ -5,12 +5,9 @@ import hmac
 import logging
 import os
 from typing import Any
-from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import PlainTextResponse
-
-from channels.whatsapp.sender import send_whatsapp_acknowledgment
 
 logger = logging.getLogger("whatsapp.adapter")
 
@@ -85,54 +82,22 @@ def _ingest_whatsapp_lead(
     text: str,
     contact_name: str = "",
 ) -> dict[str, Any]:
-    from app import normalize_lead_payload
-    from tools.lead_ingestion import ingest_lead
+    from tools.channel_intake import ingest_channel_message
 
-    lead_id = f"wa_{uuid4().hex[:8]}"
-    lead = normalize_lead_payload(
-        {
-            "lead_id": lead_id,
-            "name": contact_name or wa_number,
-            "email": f"lead+{wa_number}@whatsapp.invalid",
-            "company": "",
-            "role": "",
-            "source": "whatsapp",
-            "service_interest": _extract_service_interest(text),
-            "message": text,
-            "budget": "",
-            "timeline": "",
-            "website": "",
-            "status": "new",
-        }
+    result = ingest_channel_message(
+        source_channel="whatsapp",
+        channel_user_id=wa_number,
+        text=text,
+        sender_name=contact_name or wa_number,
     )
-    lead["source_channel"] = "whatsapp"
-    lead["channel_user_id"] = wa_number
 
-    result = ingest_lead(lead)
     logger.info(
-        "whatsapp_lead_ingested lead_id=%s status=%s",
-        lead_id,
+        "whatsapp_channel_message_queued lead_id=%s status=%s",
+        result.get("lead_id"),
         result.get("status"),
     )
 
-    try:
-        send_whatsapp_acknowledgment(to=wa_number, lead_name=contact_name)
-    except Exception as exc:
-        logger.warning(
-            "whatsapp_ack_failed lead_id=%s wa_number=%s error=%s",
-            lead_id,
-            wa_number,
-            exc,
-        )
-
-    return {"lead_id": lead_id, "status": result.get("status")}
-
-
-def _extract_service_interest(text: str) -> str:
-    clean = text.strip()
-    if len(clean) <= 200:
-        return clean
-    return f"{clean[:200].rstrip()}..."
+    return result
 
 
 def _verify_meta_signature(body: bytes, app_secret: str, header: str) -> bool:
@@ -144,3 +109,4 @@ def _verify_meta_signature(body: bytes, app_secret: str, header: str) -> bool:
         hashlib.sha256,
     ).hexdigest()
     return hmac.compare_digest(expected, header)
+

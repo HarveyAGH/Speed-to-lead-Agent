@@ -3,10 +3,8 @@ from __future__ import annotations
 import logging
 import os
 from typing import Any
-from uuid import uuid4
 
 from channels.telegram_leads.sender import (
-    send_telegram_acknowledgment,
     send_telegram_lead_message,
 )
 
@@ -57,53 +55,21 @@ def _ingest_telegram_lead(
     full_name: str,
     username: str,
 ) -> dict[str, Any]:
-    from app import normalize_lead_payload
-    from tools.lead_ingestion import ingest_lead
+    from tools.channel_intake import ingest_channel_message
 
-    lead_id = f"tg_{uuid4().hex[:8]}"
-    email_name = username or chat_id
-    lead = normalize_lead_payload(
-        {
-            "lead_id": lead_id,
-            "name": full_name,
-            "email": f"lead+{email_name}@telegram.invalid",
-            "company": "",
-            "role": "",
-            "source": "telegram",
-            "service_interest": _extract_service_interest(text),
-            "message": text,
-            "budget": "",
-            "timeline": "",
-            "website": "",
-            "status": "new",
-        }
+    result = ingest_channel_message(
+        source_channel="telegram",
+        channel_user_id=chat_id,
+        text=text,
+        sender_name=full_name,
+        username=username,
     )
-    lead["source_channel"] = "telegram"
-    lead["channel_user_id"] = chat_id
 
-    result = ingest_lead(lead)
     logger.info(
-        "telegram_lead_ingested lead_id=%s chat_id=%s status=%s",
-        lead_id,
+        "telegram_channel_message_queued lead_id=%s chat_id=%s status=%s",
+        result.get("lead_id"),
         chat_id,
         result.get("status"),
     )
 
-    try:
-        send_telegram_acknowledgment(chat_id=chat_id, lead_name=full_name)
-    except Exception as exc:
-        logger.warning(
-            "telegram_lead_ack_failed lead_id=%s chat_id=%s error=%s",
-            lead_id,
-            chat_id,
-            exc,
-        )
-
-    return {"lead_id": lead_id, "status": result.get("status")}
-
-
-def _extract_service_interest(text: str) -> str:
-    clean = text.strip()
-    if len(clean) <= 200:
-        return clean
-    return f"{clean[:200].rstrip()}..."
+    return result

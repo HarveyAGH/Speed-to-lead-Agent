@@ -90,6 +90,23 @@ Tally
 -> simulated sent_email.json artifact
 ```
 
+## Messaging Channel Flow
+
+Telegram and WhatsApp are not treated as form submissions. They use a separate speed-to-lead conversation path:
+
+```text
+Telegram/WhatsApp message
+-> channel adapter
+-> channel_conversations + channel_messages tables
+-> lead_jobs row with job_type=channel_message
+-> worker.py claims the job
+-> speed_to_lead_chat structured LLM agent
+-> short chat-native customer reply
+-> owner Telegram escalation if qualified or needs human judgment
+```
+
+The form workflow can draft email-style replies because the lead already submitted structured fields. The channel workflow does not require email and does not generate email subjects.
+
 ## What Is Real
 
 - Airtable read is real when `AIRTABLE_API_KEY` and `AIRTABLE_BASE_ID` are configured.
@@ -103,6 +120,7 @@ Tally
 - Telegram approval messages include the latest saved Airtable `Agent_runs` decision and draft.
 - LangSmith tracing is real when LangSmith env vars are configured.
 - Email sending is still simulated by writing `sent_email.json`; no real email is sent yet.
+- Telegram and WhatsApp inbound messages are routed through a dedicated conversation workflow, not the form/email workflow.
 
 ## Setup
 
