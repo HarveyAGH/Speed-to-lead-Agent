@@ -6,6 +6,7 @@ from typing import Any
 
 from config import PROMPT_DIR
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.runnables import RunnableBinding
 
 
 def load_prompt(name: str) -> str:
@@ -44,7 +45,7 @@ def build_structured_chain(model: Any, prompt_name: str, schema: type[Any]):
             ("human", "{input}"),
         ]
     )
-    base_model = getattr(model, "bound", model)
+    base_model = model.bound if isinstance(model, RunnableBinding) else model
     structured_model = base_model.with_structured_output(schema)
     return (prompt | structured_model).with_retry(
         stop_after_attempt=3,

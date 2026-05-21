@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import re
 import time
 import traceback
 from functools import lru_cache
@@ -17,7 +18,12 @@ from app import (
     _owner_summary_from_run,
     run_approval_workflow_status,
 )
-from config import MODEL
+from config import (
+    CHANNEL_CONTEXT_MAX_CHARS,
+    CHANNEL_MESSAGE_MAX_CHARS,
+    CHANNEL_PROFILE_MAX_CHARS,
+    MODEL,
+)
 from tools.channel_conversations import (
     append_channel_message,
     get_conversation_context,
@@ -321,7 +327,9 @@ def process_channel_message_job(job: dict[str, Any]) -> dict[str, Any]:
             "conversation_status": context.get("status"),
             "owner_already_escalated": owner_already_escalated,
             "last_owner_escalated_at": str(context.get("last_owner_escalated_at") or ""),
-            "existing_extracted_profile": context.get("extracted_profile") or {},
+            "existing_extracted_profile": _compact_profile(
+                context.get("extracted_profile") or {}
+            ),
             "recent_messages": _message_context(context.get("messages", [])),
             "agency_profile": json.loads(get_agency_profile.invoke({})),
             "owner_config": get_owner_config(),
@@ -392,7 +400,7 @@ def process_channel_message_job(job: dict[str, Any]) -> dict[str, Any]:
                 score=decision.get("score", ""),
                 extracted_profile=dict(decision.get("extracted_profile") or {}),
                 transcript=_message_context(context.get("messages", []))
-                + [{"role": "assistant", "content": reply_text}],
+                + [{"role": "assistant", "content": _trim_text(reply_text, CHANNEL_MESSAGE_MAX_CHARS)}],
             )
             if not _notification_delivered(owner_notification):
                 raise RuntimeError(
@@ -619,7 +627,7 @@ def _looks_like_nurture_not_ready(decision: dict[str, Any]) -> bool:
         key in profile and profile[key] not in {"", "unknown", "<unknown>", "n/a"}
         for key in ("business_type", "monthly_revenue", "monthly_inquiry_volume")
     )
-    too_early_signals = any(
+    too_early_language = any(
         marker in combined
         for marker in (
             "too early",
@@ -629,9 +637,26 @@ def _looks_like_nurture_not_ready(decision: dict[str, Any]) -> bool:
             "not viable",
             "low revenue",
             "no website",
-            "$450",
-            "6 inquiries",
         )
+    )
+    thresholds = _automation_roi_thresholds()
+    monthly_revenue = _extract_number(
+        profile.get("monthly_revenue")
+        or profile.get("revenue")
+        or profile.get("monthly_business_revenue")
+    )
+    lead_volume = _extract_number(
+        profile.get("monthly_inquiry_volume")
+        or profile.get("inquiries_per_month")
+        or profile.get("monthly_lead_volume")
+        or profile.get("lead_volume")
+    )
+    too_early_metrics = (
+        monthly_revenue is not None
+        and monthly_revenue < thresholds["min_monthly_revenue"]
+    ) or (
+        lead_volume is not None
+        and lead_volume < thresholds["min_monthly_leads"]
     )
     service_interest = profile.get("service_interest", "")
     wants_automation = any(
@@ -639,7 +664,7 @@ def _looks_like_nurture_not_ready(decision: dict[str, Any]) -> bool:
         for marker in ("ai automation", "automation", "respond", "customer messages")
     ) or bool(service_interest)
 
-    return has_real_business and too_early_signals and wants_automation
+    return has_real_business and (too_early_language or too_early_metrics) and wants_automation
 
 
 def _reply_text_for_decision(decision: dict[str, Any]) -> str:
@@ -743,14 +768,95 @@ def _closing_reply(*, owner_already_escalated: bool) -> str:
 
 
 def _message_context(messages: list[dict[str, Any]]) -> list[dict[str, str]]:
-    return [
-        {
-            "role": str(message.get("role") or ""),
-            "content": str(message.get("content") or ""),
-        }
-        for message in messages
-        if message.get("content")
-    ]
+    items: list[dict[str, str]] = []
+    total_chars = 0
+
+    for message in messages:
+        content = str(message.get("content") or "").strip()
+        if not content:
+            continue
+
+        content = _trim_text(content, CHANNEL_MESSAGE_MAX_CHARS)
+        projected_total = total_chars + len(content)
+        if projected_total > CHANNEL_CONTEXT_MAX_CHARS:
+            remaining = CHANNEL_CONTEXT_MAX_CHARS - total_chars
+            if remaining <= 0:
+                break
+            content = _trim_text(content, remaining)
+
+        items.append(
+            {
+                "role": str(message.get("role") or ""),
+                "content": content,
+            }
+        )
+        total_chars += len(content)
+
+    return items
+
+
+def _compact_profile(profile: dict[str, Any]) -> dict[str, Any]:
+    compact: dict[str, Any] = {}
+    total_chars = 0
+
+    for key, value in profile.items():
+        key_text = str(key)
+        value_text = str(value)
+        remaining = CHANNEL_PROFILE_MAX_CHARS - total_chars - len(key_text)
+        if remaining <= 0:
+            compact["_truncated"] = True
+            break
+
+        compact[key_text] = _trim_text(value_text, remaining)
+        total_chars += len(key_text) + len(str(compact[key_text]))
+
+    return compact
+
+
+def _trim_text(text: str, max_chars: int) -> str:
+    if max_chars <= 0:
+        return "...[truncated]"
+    if len(text) <= max_chars:
+        return text
+    suffix = "...[truncated]"
+    if max_chars <= len(suffix):
+        return suffix[:max_chars]
+    return f"{text[: max_chars - len(suffix)].rstrip()}{suffix}"
+
+
+def _automation_roi_thresholds() -> dict[str, int]:
+    try:
+        profile = json.loads(get_agency_profile.invoke({}))
+    except Exception:
+        profile = {}
+    icp = dict(profile.get("ideal_customer_profile") or {})
+    return {
+        "min_monthly_revenue": _safe_int(
+            icp.get("min_monthly_revenue_for_automation"),
+            default=1000,
+        ),
+        "min_monthly_leads": _safe_int(
+            icp.get("min_monthly_lead_volume_for_automation"),
+            default=10,
+        ),
+    }
+
+
+def _extract_number(value: Any) -> int | None:
+    if value is None:
+        return None
+    text = str(value).replace(",", "")
+    match = re.search(r"\d+", text)
+    if not match:
+        return None
+    return int(match.group(0))
+
+
+def _safe_int(value: Any, *, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def _dispatch_auto_send_response(

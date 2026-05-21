@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+from fastapi import BackgroundTasks
 from fastapi import HTTPException
 
 import app
@@ -134,6 +135,35 @@ def test_telegram_webhook_ignores_duplicate_final_status(monkeypatch):
     )
 
     assert result["status"] == "duplicate_callback_ignored"
+
+
+def test_telegram_webhook_queues_form_approval_background_task(monkeypatch):
+    monkeypatch.setattr(app, "TELEGRAM_WEBHOOK_SECRET", "")
+    monkeypatch.setattr(app, "_latest_agent_run_fields", lambda lead_id: {})
+    monkeypatch.setattr(app, "answer_callback_query", lambda *args, **kwargs: {"ok": True})
+    monkeypatch.setattr(app, "remove_approval_buttons", lambda *args, **kwargs: {"ok": True})
+    monkeypatch.setattr(app, "edit_approval_message", lambda *args, **kwargs: {"ok": True})
+
+    background_tasks = BackgroundTasks()
+    result = app.telegram_webhook(
+        {
+            "callback_query": {
+                "id": "callback_1",
+                "data": "approve:lead_1",
+                "message": {"message_id": 10, "chat": {"id": 20}},
+            }
+        },
+        background_tasks=background_tasks,
+        x_telegram_bot_api_secret_token=None,
+    )
+
+    assert result == {
+        "ok": True,
+        "lead_id": "lead_1",
+        "decision": "approve",
+        "status": "queued_for_processing",
+    }
+    assert len(background_tasks.tasks) == 1
 
 
 def test_telegram_webhook_records_channel_owner_action(monkeypatch):

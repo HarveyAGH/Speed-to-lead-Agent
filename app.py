@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict, deque
+from contextlib import asynccontextmanager
 from time import monotonic
 from typing import Any
 from uuid import uuid4
 
-from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 from langgraph.errors import GraphInterrupt
 
@@ -14,9 +15,11 @@ from config import (
     MAX_WEBHOOK_BODY_BYTES,
     RATE_LIMIT_REQUESTS,
     RATE_LIMIT_WINDOW_SECONDS,
+    AGENCY_PROFILE_PATH,
     TELEGRAM_ALLOW_OWNER_AS_LEAD,
     TELEGRAM_WEBHOOK_SECRET,
     WEBHOOK_SHARED_SECRET,
+    OWNER_CONFIG_PATH,
 )
 from langgraph.types import Command
 from channels.channel_dispatcher import dispatch_lead_response
@@ -46,10 +49,27 @@ from tools.telegram import (
 )
 
 
-app = FastAPI(title="Lead Intake Agent API")
+
+@asynccontextmanager
+async def lifespan(app_instance: FastAPI):
+    validate_startup_config()
+    yield
+
+
+app = FastAPI(title="Lead Intake Agent API", lifespan=lifespan)
 _rate_limit_windows: dict[str, deque[float]] = defaultdict(deque)
 logger = logging.getLogger("lead_api")
 register_whatsapp(app)
+
+
+def validate_startup_config() -> None:
+    if not AGENCY_PROFILE_PATH.exists():
+        raise RuntimeError(f"AGENCY_PROFILE_PATH not found: {AGENCY_PROFILE_PATH}")
+    if not OWNER_CONFIG_PATH.exists():
+        logger.warning(
+            "OWNER_CONFIG_PATH not found: %s — owner defaults may be incomplete",
+            OWNER_CONFIG_PATH,
+        )
 
 
 @app.middleware("http")
@@ -146,9 +166,22 @@ def reject_lead_send(
 
 
 @app.post("/telegram/webhook")
+def telegram_webhook_route(
+    payload: dict[str, Any],
+    background_tasks: BackgroundTasks,
+    x_telegram_bot_api_secret_token: str | None = Header(default=None),
+) -> dict[str, Any]:
+    return telegram_webhook(
+        payload,
+        x_telegram_bot_api_secret_token=x_telegram_bot_api_secret_token,
+        background_tasks=background_tasks,
+    )
+
+
 def telegram_webhook(
     payload: dict[str, Any],
-    x_telegram_bot_api_secret_token: str | None = Header(default=None),
+    x_telegram_bot_api_secret_token: str | None = None,
+    background_tasks: BackgroundTasks | None = None,
 ) -> dict[str, Any]:
     if (
         TELEGRAM_WEBHOOK_SECRET
@@ -158,6 +191,8 @@ def telegram_webhook(
 
     callback = payload.get("callback_query")
     if callback:
+        if background_tasks is not None and _is_form_approval_callback(callback):
+            return _queue_form_approval_callback(callback, background_tasks)
         return _handle_owner_callback(callback)
 
     message = payload.get("message")
@@ -217,17 +252,39 @@ def _handle_owner_callback(callback: dict[str, Any]) -> dict[str, Any]:
             message_id=message_id,
         )
 
+    return _process_form_approval_callback(callback, acknowledge=True)
+
+
+def _process_form_approval_callback(
+    callback: dict[str, Any],
+    *,
+    acknowledge: bool,
+) -> dict[str, Any]:
+    callback_id = callback["id"]
+    data = callback.get("data", "")
+    message = callback.get("message", {})
+    chat = message.get("chat", {})
+    chat_id = chat.get("id")
+    message_id = message.get("message_id")
+
+    if ":" not in data:
+        if acknowledge:
+            answer_callback_query(callback_id, "Invalid approval action.")
+        return {"ok": False, "error": "invalid_callback_data"}
+
     decision, lead_id = data.split(":", 1)
 
     if decision not in {"approve", "reject"}:
-        answer_callback_query(callback_id, "Unknown decision.")
+        if acknowledge:
+            answer_callback_query(callback_id, "Unknown decision.")
         return {"ok": False, "error": "unknown_decision"}
 
     latest_run = _latest_agent_run_fields(lead_id)
     current_status = str(latest_run.get("approval_status") or "")
     if current_status in {"approved_sent", "rejected_by_owner"}:
         decision_label = "already approved ✅" if current_status == "approved_sent" else "already rejected ❌"
-        answer_callback_query(callback_id, f"Lead was {decision_label}.")
+        if acknowledge:
+            answer_callback_query(callback_id, f"Lead was {decision_label}.")
         edit_result = None
         if chat_id and message_id:
             remove_approval_buttons(chat_id=chat_id, message_id=message_id)
@@ -247,8 +304,9 @@ def _handle_owner_callback(callback: dict[str, Any]) -> dict[str, Any]:
             "telegram_edit": edit_result,
         }
 
-    answer_callback_query(callback_id, f"{decision.title()} received. Processing...")
-    if chat_id and message_id:
+    if acknowledge:
+        answer_callback_query(callback_id, f"{decision.title()} received. Processing...")
+    if acknowledge and chat_id and message_id:
         remove_approval_buttons(chat_id=chat_id, message_id=message_id)
 
     result = resume_lead_send(lead_id, decision)
@@ -301,6 +359,61 @@ def _handle_owner_callback(callback: dict[str, Any]) -> dict[str, Any]:
         "telegram_edit": edit_result,
         "airtable_status_update": airtable_status_update,
         "queue_status_update": queue_status_update,
+    }
+
+
+def _is_form_approval_callback(callback: dict[str, Any]) -> bool:
+    data = str(callback.get("data") or "")
+    return data.startswith("approve:") or data.startswith("reject:")
+
+
+def _queue_form_approval_callback(
+    callback: dict[str, Any],
+    background_tasks: BackgroundTasks,
+) -> dict[str, Any]:
+    callback_id = callback["id"]
+    data = str(callback.get("data") or "")
+    message = callback.get("message", {})
+    chat = message.get("chat", {})
+    chat_id = chat.get("id")
+    message_id = message.get("message_id")
+
+    if ":" not in data:
+        answer_callback_query(callback_id, "Invalid approval action.")
+        return {"ok": False, "error": "invalid_callback_data"}
+
+    decision, lead_id = data.split(":", 1)
+    if decision not in {"approve", "reject"}:
+        answer_callback_query(callback_id, "Unknown decision.")
+        return {"ok": False, "error": "unknown_decision"}
+
+    latest_run = _latest_agent_run_fields(lead_id)
+    current_status = str(latest_run.get("approval_status") or "")
+    if current_status in {"approved_sent", "rejected_by_owner"}:
+        return _process_form_approval_callback(callback, acknowledge=True)
+
+    answer_callback_query(callback_id, f"{decision.title()} received. Processing...")
+    if chat_id and message_id:
+        remove_approval_buttons(chat_id=chat_id, message_id=message_id)
+        edit_approval_message(
+            chat_id=chat_id,
+            message_id=message_id,
+            text=(
+                f"Lead {lead_id}: {decision} received.\n\n"
+                "Processing the approval decision now."
+            ),
+        )
+
+    background_tasks.add_task(
+        _process_form_approval_callback,
+        callback,
+        acknowledge=False,
+    )
+    return {
+        "ok": True,
+        "lead_id": lead_id,
+        "decision": decision,
+        "status": "queued_for_processing",
     }
 
 

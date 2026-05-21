@@ -1,20 +1,16 @@
 from __future__ import annotations
 
-import hashlib
-import hmac
-
 from channels.whatsapp import adapter
 from channels.whatsapp.adapter import handle_whatsapp_payload, _verify_meta_signature
 
 
 def test_verify_meta_signature_accepts_valid_signature():
-    body = b'{"hello":"world"}'
-    secret = "app-secret"
-    signature = "sha256=" + hmac.new(
-        secret.encode("utf-8"),
-        body,
-        hashlib.sha256,
-    ).hexdigest()
+    body = b"The quick brown fox jumps over the lazy dog"
+    secret = "key"
+    signature = (
+        "sha256="
+        "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8"
+    )
 
     assert _verify_meta_signature(body, secret, signature)
 

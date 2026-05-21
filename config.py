@@ -32,10 +32,7 @@ else:
     )
 
 
-MODEL: Any = llm.with_retry(
-    stop_after_attempt=3,
-    wait_exponential_jitter=True,
-)
+MODEL: Any = llm
 OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", str(PROJECT_ROOT / "outputs")))
 MOCK_DATA_DIR = Path(os.getenv("MOCK_DATA_DIR", str(PROJECT_ROOT / "mock_data")))
 AGENCY_PROFILE_PATH = Path(
@@ -71,3 +68,7 @@ MAX_WEBHOOK_BODY_BYTES = int(os.getenv("MAX_WEBHOOK_BODY_BYTES", "262144"))
 RATE_LIMIT_REQUESTS = int(os.getenv("RATE_LIMIT_REQUESTS", "60"))
 RATE_LIMIT_WINDOW_SECONDS = int(os.getenv("RATE_LIMIT_WINDOW_SECONDS", "60"))
 STALE_JOB_MINUTES = int(os.getenv("STALE_JOB_MINUTES", "10"))
+
+CHANNEL_CONTEXT_MAX_CHARS = int(os.getenv("CHANNEL_CONTEXT_MAX_CHARS", "4000"))
+CHANNEL_MESSAGE_MAX_CHARS = int(os.getenv("CHANNEL_MESSAGE_MAX_CHARS", "600"))
+CHANNEL_PROFILE_MAX_CHARS = int(os.getenv("CHANNEL_PROFILE_MAX_CHARS", "1500"))

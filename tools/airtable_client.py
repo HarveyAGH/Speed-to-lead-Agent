@@ -44,7 +44,7 @@ def find_lead_by_id(lead_id: str) -> dict[str, Any] | None:
     if not airtable_is_configured():
         return None
 
-    formula = f"{{lead_id}}='{lead_id}'"
+    formula = f"{{lead_id}}='{_airtable_formula_string(lead_id)}'"
     response = _request(
         "GET",
         AIRTABLE_LEADS_TABLE,
@@ -60,7 +60,7 @@ def find_latest_agent_run_by_lead_id(lead_id: str) -> dict[str, Any] | None:
     if not airtable_is_configured():
         return None
 
-    formula = f"{{lead_id}}='{lead_id}'"
+    formula = f"{{lead_id}}='{_airtable_formula_string(lead_id)}'"
     response = _request(
         "GET",
         AIRTABLE_AGENT_RUNS_TABLE,
@@ -174,3 +174,7 @@ def update_latest_agent_run_status(
         lead_id=lead_id,
         fields={"approval_status": approval_status},
     )
+
+
+def _airtable_formula_string(value: str) -> str:
+    return str(value).replace("\\", "\\\\").replace("'", "\\'")

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import hmac
 import logging
 import os
@@ -117,11 +116,11 @@ def _ingest_whatsapp_lead(
 def _verify_meta_signature(body: bytes, app_secret: str, header: str) -> bool:
     if not header.startswith("sha256="):
         return False
-    expected = "sha256=" + hmac.new(
+    expected = "sha256=" + hmac.digest(
         app_secret.encode("utf-8"),
         body,
-        hashlib.sha256,
-    ).hexdigest()
+        "sha256",
+    ).hex()
     return hmac.compare_digest(expected, header)
 
 

@@ -126,16 +126,20 @@ def get_conversation_context(
         messages = conn.execute(
             """
             SELECT role, content, created_at
-            FROM channel_messages
-            WHERE conversation_id = %s
-            ORDER BY created_at DESC
-            LIMIT %s;
+            FROM (
+                SELECT role, content, created_at
+                FROM channel_messages
+                WHERE conversation_id = %s
+                ORDER BY created_at DESC
+                LIMIT %s
+            ) recent_messages
+            ORDER BY created_at ASC;
             """,
             (conversation["id"], limit),
         ).fetchall()
 
     context = dict(conversation)
-    context["messages"] = [dict(row) for row in reversed(messages)]
+    context["messages"] = [dict(row) for row in messages]
     return context
 
 

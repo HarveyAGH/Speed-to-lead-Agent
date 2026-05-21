@@ -10,6 +10,18 @@ The target buyer is a small service business, agency, clinic, or local operator 
 
 The current system receives structured leads from a Tally form webhook and live conversational leads from Telegram or WhatsApp. It stores leads in Airtable, queues background processing in Postgres, invokes the appropriate workflow in a worker process, saves evidence artifacts, writes run or messaging snapshots back to Airtable, sends chat-native customer replies, alerts the owner through Telegram when a lead needs human handoff, and resumes approval-gated form sends through LangGraph interrupt/resume.
 
+Latest v4 audit hardening now implemented:
+
+- Channel conversations cap per-message context and total recent-message context before LLM calls.
+- Accumulated extracted profiles are compacted before being passed back into the chat agent.
+- Telegram form-approval callbacks return quickly and offload graph resume to FastAPI background tasks.
+- WhatsApp Meta signature verification uses `hmac.digest(...)` and is covered by a known HMAC-SHA256 test vector.
+- Airtable formula filters escape lead IDs before interpolation.
+- LLM retry behavior has one retry boundary at the structured-chain layer instead of nested model + chain retries.
+- Conversation-message ordering is chronological at the SQL query level.
+- Automation nurture thresholds are configurable in `agency_profile.json` instead of hardcoded to one fixture.
+- Airtable messaging snapshots mark long CRM messages with `...[truncated]`.
+
 Real integrations currently implemented:
 
 - FastAPI webhook ingestion.
@@ -26,7 +38,7 @@ Real integrations currently implemented:
 - LangSmith tracing through environment configuration.
 - Local evidence artifacts under `outputs/`.
 
-Intentionally simulated:
+Intentionally simulated / still out of scope:
 
 - Actual customer email transport. "Sending" currently writes a local `sent_email.json` artifact instead of using Resend/Gmail/SMTP. This is deliberate while the system is still being hardened.
 - Production deployment/process management. The project is still local/ngrok oriented until the next deployment phase.
@@ -642,11 +654,11 @@ Please evaluate:
 
 ## My Status Rating
 
-I give this a status rating of: **84% production-shaped MVP after WhatsApp/Telegram messaging validation and the second production-hardening pass**.
+I give this a status rating of: **87% production-shaped MVP after WhatsApp/Telegram messaging validation and v4 audit hardening**.
 
 Meaning:
 
-- It is now stronger than a local demo because it has real webhook intake, Airtable, Postgres queueing, Postgres checkpointing, Telegram owner approval, WhatsApp inbound/outbound messaging, Telegram inbound messaging, conversation state, duplicate webhook event protection, deterministic send policy, owner handoff controls, and compact operational logs.
+- It is now stronger than a local demo because it has real webhook intake, Airtable, Postgres queueing, Postgres checkpointing, Telegram owner approval, WhatsApp inbound/outbound messaging, Telegram inbound messaging, conversation state, duplicate webhook event protection, deterministic send policy, owner handoff controls, bounded LLM context for messaging conversations, and compact operational logs.
 - It is not yet a production deployment because deployment/process management is not finished, production monitoring is not built, real email is still simulated, and deeper deterministic content-safety checks are still needed before fully trusting all auto-send paths.
 
 What is YOUR rating compared to mine? Please give your percentage and explain the top 3 reasons your score differs.

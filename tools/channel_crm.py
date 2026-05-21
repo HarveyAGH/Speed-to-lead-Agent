@@ -163,7 +163,9 @@ def _compact_message(
         _line("Qualification summary", qualification_summary),
     ]
     compact = "\n".join(part for part in parts if _is_known(part))
-    return compact[:2000]
+    if len(compact) <= 2000:
+        return compact
+    return f"{compact[:1985].rstrip()}...[truncated]"
 
 
 def _line(label: str, value: Any) -> str:

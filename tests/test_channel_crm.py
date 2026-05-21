@@ -159,3 +159,20 @@ def test_write_channel_lead_snapshot_uses_supplied_status(monkeypatch):
 
     assert result["action"] == "created"
     assert created["status"] == "messaging_active"
+
+
+def test_channel_crm_message_marks_truncation():
+    fields = build_channel_lead_fields(
+        lead_id="wa_long",
+        source_channel="whatsapp",
+        channel_user_id="15551234567",
+        sender_name="Marcus",
+        extracted_profile={"business_type": "roofing", "pain_point": "x" * 3000},
+        latest_customer_message="Need help",
+        owner_summary="",
+        qualification_summary="",
+        status="messaging_active",
+    )
+
+    assert fields["message"].endswith("...[truncated]")
+    assert len(fields["message"]) <= 2000
