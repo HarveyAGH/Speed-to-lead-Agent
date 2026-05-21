@@ -9,6 +9,7 @@ from typing import Any
 
 from langgraph.errors import GraphInterrupt
 
+from channels.channel_dispatcher import dispatch_lead_response
 from app import (
     _latest_agent_run_fields,
     _owner_summary_from_run,
@@ -39,9 +40,12 @@ def process_one_job() -> dict[str, Any] | None:
     job_id = job["id"]
     lead_id = job["lead_id"]
     payload = dict(job.get("payload") or {})
+    source_channel = str(payload.get("source_channel") or "")
+    channel_user_id = str(payload.get("channel_user_id") or "")
 
     try:
         telegram_result = None
+        channel_dispatch_result = None
         workflow_state: dict[str, Any] = {}
         try:
             workflow_result = run_approval_workflow_status(lead_id)
@@ -90,6 +94,22 @@ def process_one_job() -> dict[str, Any] | None:
                 send_policy=send_policy,
             )
 
+            if completion_status == "auto_sent":
+                channel_dispatch_result = _dispatch_auto_send_response(
+                    source_channel=source_channel,
+                    channel_user_id=channel_user_id,
+                    latest_run=latest_run,
+                )
+                if (
+                    source_channel
+                    and channel_dispatch_result
+                    and channel_dispatch_result.get("ok") is False
+                ):
+                    raise RuntimeError(
+                        "Auto-send policy selected a channel response, but "
+                        f"dispatch failed: {channel_dispatch_result}"
+                    )
+
             if completion_status != "succeeded":
                 update_latest_agent_run_status(
                     lead_id=lead_id,
@@ -123,7 +143,9 @@ def process_one_job() -> dict[str, Any] | None:
             "status": workflow_status,
             "summary": workflow_summary,
             "send_policy": send_policy,
+            "source_channel": source_channel or None,
             "sent_email": workflow_state.get("sent_email"),
+            "channel_dispatch": channel_dispatch_result,
             "telegram": telegram_result,
         }
     except Exception as exc:
@@ -169,6 +191,23 @@ def _completion_status_from_state(
     if final_status == "not_sent":
         return "not_sent"
     return "succeeded"
+
+
+def _dispatch_auto_send_response(
+    *,
+    source_channel: str,
+    channel_user_id: str,
+    latest_run: dict[str, Any],
+) -> dict[str, Any] | None:
+    if not source_channel or not channel_user_id:
+        return None
+
+    return dispatch_lead_response(
+        source_channel=source_channel,
+        channel_user_id=channel_user_id,
+        subject=str(latest_run.get("draft_subject") or ""),
+        body=str(latest_run.get("draft_body") or ""),
+    )
 
 
 def _decision_from_latest_run(run_fields: dict[str, Any]) -> dict[str, Any]:

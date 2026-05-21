@@ -18,6 +18,8 @@ from config import (
     WEBHOOK_SHARED_SECRET,
 )
 from langgraph.types import Command
+from channels.channel_dispatcher import dispatch_lead_response
+from channels.whatsapp.adapter import register_whatsapp
 from tools.airtable_client import (
     airtable_is_configured,
     find_latest_agent_run_by_lead_id,
@@ -25,6 +27,7 @@ from tools.airtable_client import (
 )
 from tools.lead_ingestion import build_lead_fingerprint, ingest_lead
 from tools.job_queue import (
+    get_job_payload_by_lead_id,
     list_recent_jobs,
     mark_latest_waiting_job_resolved,
     queue_is_configured,
@@ -42,6 +45,7 @@ from tools.telegram import (
 app = FastAPI(title="Lead Intake Agent API")
 _rate_limit_windows: dict[str, deque[float]] = defaultdict(deque)
 logger = logging.getLogger("lead_api")
+register_whatsapp(app)
 
 
 @app.middleware("http")
@@ -149,9 +153,34 @@ def telegram_webhook(
         raise HTTPException(status_code=401, detail="Invalid Telegram webhook secret")
 
     callback = payload.get("callback_query")
-    if not callback:
-        return {"ok": True, "ignored": "not_callback_query"}
+    if callback:
+        return _handle_owner_callback(callback)
 
+    message = payload.get("message")
+    if message:
+        from channels.telegram_leads.adapter import (
+            handle_telegram_lead_message,
+            is_owner_chat,
+        )
+
+        chat = message.get("chat") or {}
+        from_user = message.get("from") or {}
+        chat_id = str(chat.get("id") or from_user.get("id") or "")
+        if chat_id and not is_owner_chat(chat_id):
+            result = handle_telegram_lead_message(message)
+            logger.info(
+                "telegram_lead_update status=%s lead_id=%s",
+                result.get("status"),
+                result.get("lead_id"),
+            )
+            return {"ok": True, "lead_intake": result}
+
+        return {"ok": True, "ignored": "owner_or_missing_chat"}
+
+    return {"ok": True, "ignored": "unsupported_telegram_update"}
+
+
+def _handle_owner_callback(callback: dict[str, Any]) -> dict[str, Any]:
     callback_id = callback["id"]
     data = callback.get("data", "")
     message = callback.get("message", {})
@@ -198,8 +227,22 @@ def telegram_webhook(
         remove_approval_buttons(chat_id=chat_id, message_id=message_id)
 
     result = resume_lead_send(lead_id, decision)
+    channel_dispatch_result = None
+    if decision == "approve":
+        channel_dispatch_result = _dispatch_approved_response(
+            lead_id=lead_id,
+            latest_run=latest_run,
+        )
+    dispatch_failed = (
+        decision == "approve"
+        and channel_dispatch_result is not None
+        and channel_dispatch_result.get("ok") is False
+    )
 
-    approval_status = "approved_sent" if decision == "approve" else "rejected_by_owner"
+    if dispatch_failed:
+        approval_status = "approved_dispatch_failed"
+    else:
+        approval_status = "approved_sent" if decision == "approve" else "rejected_by_owner"
     airtable_status_update = update_latest_agent_run_status(
         lead_id=lead_id,
         approval_status=approval_status,
@@ -209,7 +252,10 @@ def telegram_webhook(
         status=approval_status,
     )
 
-    decision_label = "approved ✅" if decision == "approve" else "rejected ❌"
+    if dispatch_failed:
+        decision_label = "approved, but channel send failed ⚠️"
+    else:
+        decision_label = "approved ✅" if decision == "approve" else "rejected ❌"
     edit_result = None
     if chat_id and message_id:
         edit_result = edit_approval_message(
@@ -226,6 +272,7 @@ def telegram_webhook(
         "lead_id": lead_id,
         "decision": decision,
         "result": result,
+        "channel_dispatch": channel_dispatch_result,
         "telegram_edit": edit_result,
         "airtable_status_update": airtable_status_update,
         "queue_status_update": queue_status_update,
@@ -322,6 +369,7 @@ def _is_guarded_path(path: str) -> bool:
     return (
         path == "/webhooks/tally"
         or path == "/telegram/webhook"
+        or path == "/whatsapp/webhook"
         or path.startswith("/approval/")
     )
 
@@ -361,6 +409,25 @@ def _latest_agent_run_fields(lead_id: str) -> dict[str, Any]:
     if not record:
         return {}
     return dict(record.get("fields", {}))
+
+
+def _dispatch_approved_response(
+    *,
+    lead_id: str,
+    latest_run: dict[str, Any],
+) -> dict[str, Any] | None:
+    payload = get_job_payload_by_lead_id(lead_id)
+    source_channel = str(payload.get("source_channel") or "")
+    channel_user_id = str(payload.get("channel_user_id") or "")
+    if not source_channel or not channel_user_id:
+        return None
+
+    return dispatch_lead_response(
+        source_channel=source_channel,
+        channel_user_id=channel_user_id,
+        subject=str(latest_run.get("draft_subject") or ""),
+        body=str(latest_run.get("draft_body") or ""),
+    )
 
 
 def _owner_summary_from_run(run_fields: dict[str, Any]) -> str:

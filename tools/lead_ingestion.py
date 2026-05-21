@@ -17,6 +17,22 @@ from tools.job_queue import (
     queue_is_configured,
 )
 
+AIRTABLE_LEAD_FIELDS = {
+    "lead_id",
+    "received_at",
+    "name",
+    "email",
+    "company",
+    "role",
+    "source",
+    "service_interest",
+    "message",
+    "budget",
+    "timeline",
+    "website",
+    "status",
+}
+
 
 def ingest_lead(lead: dict[str, str]) -> dict[str, Any]:
     if not airtable_is_configured():
@@ -108,7 +124,11 @@ def _normalize_fingerprint_part(value: Any) -> str:
 
 
 def _airtable_lead_fields(lead: dict[str, str]) -> dict[str, str]:
-    return {key: value for key, value in lead.items() if value != ""}
+    return {
+        key: value
+        for key, value in lead.items()
+        if key in AIRTABLE_LEAD_FIELDS and value != ""
+    }
 
 
 def _latest_agent_run_fields(lead_id: str) -> dict[str, Any]:

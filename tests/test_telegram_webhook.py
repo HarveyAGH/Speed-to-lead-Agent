@@ -27,7 +27,7 @@ def test_telegram_webhook_ignores_non_callback_update_without_secret(monkeypatch
         x_telegram_bot_api_secret_token=None,
     )
 
-    assert result == {"ok": True, "ignored": "not_callback_query"}
+    assert result == {"ok": True, "ignored": "owner_or_missing_chat"}
 
 
 def test_telegram_webhook_ignores_duplicate_final_status(monkeypatch):

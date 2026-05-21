@@ -75,6 +75,7 @@ def test_normalize_flat_payload_sanitizes_control_chars_and_truncates_message():
 def test_guarded_paths_are_limited_to_public_write_endpoints():
     assert _is_guarded_path("/webhooks/tally") is True
     assert _is_guarded_path("/telegram/webhook") is True
+    assert _is_guarded_path("/whatsapp/webhook") is True
     assert _is_guarded_path("/approval/lead_123/approve") is True
     assert _is_guarded_path("/health") is False
     assert _is_guarded_path("/jobs") is False

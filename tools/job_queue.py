@@ -365,6 +365,25 @@ def list_recent_jobs(limit: int = 10) -> list[dict[str, Any]]:
     return [dict(row) for row in rows]
 
 
+def get_job_payload_by_lead_id(lead_id: str) -> dict[str, Any]:
+    setup_job_queue()
+    with _connect() as conn:
+        row = conn.execute(
+            """
+            SELECT payload
+            FROM lead_jobs
+            WHERE lead_id = %s
+            ORDER BY created_at DESC
+            LIMIT 1;
+            """,
+            (lead_id,),
+        ).fetchone()
+
+    if not row:
+        return {}
+    return dict(row.get("payload") or {})
+
+
 def _connect():
     if not POSTGRES_DB_URI:
         raise RuntimeError("POSTGRES_DB_URI is required for the lead job queue.")
