@@ -69,7 +69,16 @@ def _dispatch_telegram(chat_id: str, subject: str, body: str) -> dict[str, Any]:
 def _format_channel_message(subject: str, body: str) -> str:
     parts = []
     if subject and subject.strip():
-        parts.extend([f"Subject: {subject.strip()}", ""])
+        parts.extend([f"Subject: {_normalize_message_text(subject).strip()}", ""])
     if body and body.strip():
-        parts.append(body.strip())
+        parts.append(_normalize_message_text(body).strip())
     return "\n".join(parts)
+
+
+def _normalize_message_text(text: str) -> str:
+    return (
+        str(text or "")
+        .replace("\\r\\n", "\n")
+        .replace("\\n", "\n")
+        .replace("\\t", "\t")
+    )

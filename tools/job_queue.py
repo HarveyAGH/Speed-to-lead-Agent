@@ -281,6 +281,36 @@ def mark_latest_waiting_job_resolved(lead_id: str, status: str) -> dict[str, Any
     return dict(row)
 
 
+def mark_latest_job_status_by_lead_id(lead_id: str, status: str) -> dict[str, Any]:
+    with _connect() as conn:
+        row = conn.execute(
+            """
+            UPDATE lead_jobs
+            SET status = %s,
+                finished_at = COALESCE(finished_at, now()),
+                updated_at = now(),
+                last_error = NULL
+            WHERE id = (
+                SELECT id
+                FROM lead_jobs
+                WHERE lead_id = %s
+                ORDER BY created_at DESC
+                LIMIT 1
+            )
+            RETURNING id, lead_id, status, attempts, finished_at, first_response_at, first_response_status;
+            """,
+            (status, lead_id),
+        ).fetchone()
+
+    if not row:
+        return {
+            "updated": False,
+            "lead_id": lead_id,
+            "reason": "No queue job found for lead_id.",
+        }
+    return dict(row)
+
+
 def recover_stale_running_jobs(
     stale_after_minutes: int = STALE_RUNNING_MINUTES,
 ) -> dict[str, Any]:

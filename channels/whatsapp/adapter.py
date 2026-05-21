@@ -47,6 +47,7 @@ def register_whatsapp(app: FastAPI) -> None:
 
 def handle_whatsapp_payload(payload: dict[str, Any]) -> dict[str, Any]:
     results = []
+    duplicate_count = 0
     for entry in payload.get("entry", []):
         for change in entry.get("changes", []):
             value = change.get("value", {})
@@ -64,6 +65,15 @@ def handle_whatsapp_payload(payload: dict[str, Any]) -> dict[str, Any]:
                 if not wa_number or not text:
                     continue
 
+                if not _record_whatsapp_message_event(message):
+                    duplicate_count += 1
+                    logger.info(
+                        "whatsapp_message_duplicate_ignored message_id=%s from=%s",
+                        message.get("id"),
+                        wa_number,
+                    )
+                    continue
+
                 profile = (contacts.get(wa_number) or {}).get("profile") or {}
                 results.append(
                     _ingest_whatsapp_lead(
@@ -73,7 +83,11 @@ def handle_whatsapp_payload(payload: dict[str, Any]) -> dict[str, Any]:
                     )
                 )
 
-    return {"processed": len(results), "leads": results}
+    return {
+        "processed": len(results),
+        "duplicates_ignored": duplicate_count,
+        "leads": results,
+    }
 
 
 def _ingest_whatsapp_lead(
@@ -110,3 +124,12 @@ def _verify_meta_signature(body: bytes, app_secret: str, header: str) -> bool:
     ).hexdigest()
     return hmac.compare_digest(expected, header)
 
+
+def _record_whatsapp_message_event(message: dict[str, Any]) -> bool:
+    message_id = str(message.get("id") or "").strip()
+    if not message_id:
+        return True
+
+    from tools.inbound_events import record_inbound_event
+
+    return record_inbound_event("whatsapp", message_id)

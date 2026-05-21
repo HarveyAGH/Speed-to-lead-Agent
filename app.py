@@ -24,12 +24,15 @@ from channels.whatsapp.adapter import register_whatsapp
 from tools.airtable_client import (
     airtable_is_configured,
     find_latest_agent_run_by_lead_id,
+    update_lead_fields,
     update_latest_agent_run_status,
 )
+from tools.channel_conversations import mark_conversation_owner_action
 from tools.lead_ingestion import build_lead_fingerprint, ingest_lead
 from tools.job_queue import (
     get_job_payload_by_lead_id,
     list_recent_jobs,
+    mark_latest_job_status_by_lead_id,
     mark_latest_waiting_job_resolved,
     queue_is_configured,
 )
@@ -163,11 +166,24 @@ def telegram_webhook(
             handle_telegram_lead_message,
             is_owner_chat,
         )
+        from tools.inbound_events import record_inbound_event
 
         chat = message.get("chat") or {}
         from_user = message.get("from") or {}
         chat_id = str(chat.get("id") or from_user.get("id") or "")
         if chat_id and (TELEGRAM_ALLOW_OWNER_AS_LEAD or not is_owner_chat(chat_id)):
+            telegram_event_id = _telegram_message_event_id(payload, message)
+            if telegram_event_id and not record_inbound_event(
+                "telegram",
+                telegram_event_id,
+            ):
+                logger.info(
+                    "telegram_lead_duplicate_ignored event_id=%s chat_id=%s",
+                    telegram_event_id,
+                    chat_id,
+                )
+                return {"ok": True, "duplicate_ignored": telegram_event_id}
+
             result = handle_telegram_lead_message(message)
             logger.info(
                 "telegram_lead_update status=%s lead_id=%s",
@@ -192,6 +208,14 @@ def _handle_owner_callback(callback: dict[str, Any]) -> dict[str, Any]:
     if ":" not in data:
         answer_callback_query(callback_id, "Invalid approval action.")
         return {"ok": False, "error": "invalid_callback_data"}
+
+    if data.startswith("channel:"):
+        return _handle_channel_owner_action(
+            callback_id=callback_id,
+            data=data,
+            chat_id=chat_id,
+            message_id=message_id,
+        )
 
     decision, lead_id = data.split(":", 1)
 
@@ -278,6 +302,103 @@ def _handle_owner_callback(callback: dict[str, Any]) -> dict[str, Any]:
         "airtable_status_update": airtable_status_update,
         "queue_status_update": queue_status_update,
     }
+
+
+def _handle_channel_owner_action(
+    *,
+    callback_id: str,
+    data: str,
+    chat_id: int | str | None,
+    message_id: int | None,
+) -> dict[str, Any]:
+    parts = data.split(":", 2)
+    if len(parts) != 3:
+        answer_callback_query(callback_id, "Invalid owner action.")
+        return {"ok": False, "error": "invalid_channel_action"}
+
+    _, action, lead_id = parts
+    if action not in {"take_over", "mark_booked", "mark_not_fit"}:
+        answer_callback_query(callback_id, "Unknown owner action.")
+        return {"ok": False, "error": "unknown_channel_action"}
+
+    status = _channel_owner_action_status(action)
+    answer_callback_query(callback_id, _channel_owner_action_toast(action))
+
+    conversation_update = mark_conversation_owner_action(
+        lead_id=lead_id,
+        action=action,
+    )
+    queue_update = mark_latest_job_status_by_lead_id(
+        lead_id=lead_id,
+        status=status,
+    )
+    airtable_update = update_lead_fields(
+        lead_id=lead_id,
+        fields={"status": status},
+    )
+
+    edit_result = None
+    if chat_id and message_id:
+        edit_result = edit_approval_message(
+            chat_id=chat_id,
+            message_id=message_id,
+            text=(
+                f"Lead {lead_id}: {_channel_owner_action_confirmation(action)}\n\n"
+                "The owner action has been recorded."
+            ),
+        )
+
+    return {
+        "ok": True,
+        "lead_id": lead_id,
+        "action": action,
+        "status": status,
+        "conversation_update": conversation_update,
+        "queue_update": queue_update,
+        "airtable_update": airtable_update,
+        "telegram_edit": edit_result,
+    }
+
+
+def _telegram_message_event_id(
+    payload: dict[str, Any],
+    message: dict[str, Any],
+) -> str:
+    update_id = payload.get("update_id")
+    if update_id is not None:
+        return f"update:{update_id}"
+
+    chat = message.get("chat") or {}
+    chat_id = chat.get("id")
+    message_id = message.get("message_id")
+    if chat_id is not None and message_id is not None:
+        return f"message:{chat_id}:{message_id}"
+
+    return ""
+
+
+def _channel_owner_action_status(action: str) -> str:
+    return {
+        "take_over": "owner_taking_over",
+        "mark_booked": "owner_marked_booked",
+        "mark_not_fit": "owner_marked_not_fit",
+    }[action]
+
+
+def _channel_owner_action_toast(action: str) -> str:
+    return {
+        "take_over": "Take over recorded.",
+        "mark_booked": "Lead marked booked.",
+        "mark_not_fit": "Lead marked not fit.",
+    }[action]
+
+
+def _channel_owner_action_confirmation(action: str) -> str:
+    return {
+        "take_over": "owner is taking over ✅",
+        "mark_booked": "marked booked 📅",
+        "mark_not_fit": "marked not fit ❌",
+    }[action]
 
 
 def normalize_lead_payload(payload: dict[str, Any]) -> dict[str, str]:

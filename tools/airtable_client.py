@@ -93,6 +93,29 @@ def create_lead(fields: dict[str, Any]) -> dict[str, Any]:
     return _request("POST", AIRTABLE_LEADS_TABLE, payload=payload)
 
 
+def update_lead_fields(
+    lead_id: str,
+    fields: dict[str, Any],
+) -> dict[str, Any]:
+    if not airtable_is_configured():
+        return {"configured": False}
+
+    record = find_lead_by_id(lead_id)
+    if not record:
+        return {
+            "updated": False,
+            "lead_id": lead_id,
+            "reason": "No Leads record found for lead_id.",
+        }
+
+    return _record_request(
+        "PATCH",
+        AIRTABLE_LEADS_TABLE,
+        record["id"],
+        payload={"fields": fields},
+    )
+
+
 def _record_request(
     method: str,
     table_name: str,

@@ -160,6 +160,7 @@ def send_owner_channel_escalation(
         {
             "chat_id": TELEGRAM_OWNER_CHAT_ID,
             "text": text,
+            "reply_markup": json.dumps(build_channel_owner_action_markup(lead_id)),
             "disable_web_page_preview": True,
         },
     )
@@ -181,34 +182,40 @@ def build_owner_approval_message(
     score_text = str(score) if score != "" else "not scored"
     draft_preview = _truncate(
         draft_body.strip() if draft_body else "No draft body found yet.",
-        limit=1500,
+        limit=850,
+    )
+    lead_title = _lead_title(lead_name=lead_name, company=company)
+    headline = _headline_for_fit(
+        fit=fit,
+        urgency=urgency,
+        score=score_text,
+        fallback="Review this lead before sending",
     )
 
-    return "\n".join(
+    return _compact_message(
         [
-            f"🔔 Lead approval needed for {business_label()}",
-            f"Owner: {owner_label()}",
+            f"⚡ {headline}",
+            f"{lead_title} · {business_label()}",
             "",
-            f"Lead: {lead_name or 'Unknown'}",
-            f"Company: {company or 'Unknown'}",
-            f"Lead ID: {lead_id}",
+            "📌 Snapshot",
+            _inline_fields(
+                ("Lead", lead_name or "Unknown"),
+                ("Company", company or "Unknown"),
+                ("Fit", fit or "unknown"),
+                ("Urgency", urgency or "unknown"),
+                ("Score", score_text),
+            ),
             "",
-            "📌 Decision snapshot",
-            f"- Classification: {classification or 'unknown'}",
-            f"- Fit: {fit or 'unknown'}",
-            f"- Urgency: {urgency or 'unknown'}",
-            f"- Score: {score_text}",
-            f"- Recommended action: {recommendation or 'review'}",
-            "",
-            "🧾 Owner summary",
+            "🧠 Why now",
             summary or "Review the drafted follow-up before customer-facing send.",
             "",
-            "✉️ Draft email preview",
-            f"Subject: {draft_subject or 'No subject found'}",
+            "✉️ Draft preview",
+            _format_field("Subject", draft_subject or "No subject found"),
             "",
             draft_preview,
             "",
-            "Tap Approve or Reject below.",
+            "✅ Approve if this should go out. Reject if it needs manual review.",
+            _format_field("Lead ID", lead_id),
         ]
     )
 
@@ -227,44 +234,55 @@ def build_owner_channel_escalation_message(
     extracted_profile: dict[str, Any],
     transcript: list[dict[str, Any]],
 ) -> str:
-    profile_lines = [
-        f"- {key}: {value}"
-        for key, value in sorted(extracted_profile.items())
-        if value
-    ]
-    transcript_lines = [
-        f"{str(item.get('role', 'unknown')).title()}: {item.get('content', '')}"
-        for item in transcript[-8:]
-    ]
+    profile_lines = _profile_lines(extracted_profile)
+    customer_preview = _latest_customer_message(transcript)
+    transcript_lines = _transcript_lines(transcript[-4:])
+    lead_label = _best_profile_value(
+        extracted_profile,
+        "company_name",
+        "business_type",
+        default=sender_name or "Messaging lead",
+    )
+    headline = _headline_for_fit(
+        fit=fit,
+        urgency=urgency,
+        score=score,
+        fallback="Qualified messaging lead",
+    )
 
-    return "\n".join(
+    return _compact_message(
         [
-            f"🔥 Qualified messaging lead for {business_label()}",
-            f"Owner: {owner_label()}",
+            f"🔥 {headline}",
+            f"{lead_label} · {source_channel}",
             "",
-            f"Lead ID: {lead_id}",
-            f"Channel: {source_channel}",
-            f"Sender: {sender_name or 'Unknown'}",
-            f"Channel user id: {channel_user_id}",
+            "💬 Customer said",
+            customer_preview or "No recent customer message found.",
             "",
-            "📌 Decision snapshot",
-            f"- Fit: {fit or 'unknown'}",
-            f"- Urgency: {urgency or 'unknown'}",
-            f"- Score: {score if score != '' else 'not scored'}",
+            "📌 Snapshot",
+            _inline_fields(
+                ("Fit", fit or "unknown"),
+                ("Urgency", urgency or "unknown"),
+                ("Score", score if score != "" else "not scored"),
+                ("Channel", source_channel),
+            ),
             "",
-            "🧾 Owner summary",
+            "🧠 Why this matters",
             owner_summary or "The conversation needs owner review.",
             "",
-            "🎯 Qualification summary",
-            qualification_summary or "No qualification summary was returned.",
+            "🎯 Key details",
+            "\n".join(profile_lines[:6]) if profile_lines else "No profile fields extracted yet.",
             "",
-            "👤 Extracted profile",
-            "\n".join(profile_lines) if profile_lines else "No profile fields extracted yet.",
-            "",
-            "💬 Recent transcript",
-            _truncate("\n".join(transcript_lines), limit=1500)
+            "🧾 Recent context",
+            _truncate("\n".join(transcript_lines), limit=650)
             if transcript_lines
             else "No transcript found.",
+            "",
+            "🚀 Suggested move",
+            qualification_summary
+            or "Reach out while the lead is warm. The AI already set the expectation that a human will follow up.",
+            "",
+            _format_field("Lead ID", lead_id),
+            _format_field("User", channel_user_id),
         ]
     )
 
@@ -285,31 +303,34 @@ def build_owner_status_message(
     score_text = str(score) if score != "" else "not scored"
     draft_preview = _truncate(
         draft_body.strip() if draft_body else "No draft body found yet.",
-        limit=1200,
+        limit=750,
     )
+    lead_title = _lead_title(lead_name=lead_name, company=company)
+    headline = _status_headline(status)
 
-    return "\n".join(
+    return _compact_message(
         [
-            f"⚡ Lead processed for {business_label()}: {status}",
-            f"Owner: {owner_label()}",
+            f"⚡ {headline}",
+            f"{lead_title} · {business_label()}",
             "",
-            f"Lead: {lead_name or 'Unknown'}",
-            f"Company: {company or 'Unknown'}",
-            f"Lead ID: {lead_id}",
+            "📌 Snapshot",
+            _inline_fields(
+                ("Lead", lead_name or "Unknown"),
+                ("Company", company or "Unknown"),
+                ("Fit", fit or "unknown"),
+                ("Urgency", urgency or "unknown"),
+                ("Score", score_text),
+            ),
             "",
-            "📌 Decision snapshot",
-            f"- Classification: {classification or 'unknown'}",
-            f"- Fit: {fit or 'unknown'}",
-            f"- Urgency: {urgency or 'unknown'}",
-            f"- Score: {score_text}",
-            "",
-            "🧾 Owner summary",
+            "🧠 Owner summary",
             summary or "The lead workflow finished.",
             "",
-            "✉️ Message preview",
-            f"Subject: {draft_subject or 'No subject found'}",
+            "✉️ Customer-facing message",
+            _format_field("Subject", draft_subject or "No subject found"),
             "",
             draft_preview,
+            "",
+            _format_field("Lead ID", lead_id),
         ]
     )
 
@@ -318,6 +339,168 @@ def _truncate(text: str, limit: int) -> str:
     if len(text) <= limit:
         return text
     return f"{text[:limit].rstrip()}...\n\n[Preview truncated. Full draft is saved in Airtable and outputs.]"
+
+
+def _compact_message(lines: list[str], *, limit: int = 3900) -> str:
+    text = "\n".join(str(line).rstrip() for line in lines).strip()
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit].rstrip()}...\n\n[Telegram preview truncated. Full details are stored in the run artifacts.]"
+
+
+def _format_field(label: str, value: Any) -> str:
+    return f"• {label}: {value}"
+
+
+def _inline_fields(*items: tuple[str, Any]) -> str:
+    return " · ".join(f"{label}: {value}" for label, value in items)
+
+
+def _lead_title(*, lead_name: str, company: str) -> str:
+    if lead_name and company:
+        return f"{lead_name} at {company}"
+    if company:
+        return company
+    if lead_name:
+        return lead_name
+    return "Unknown lead"
+
+
+def _headline_for_fit(
+    *,
+    fit: str,
+    urgency: str,
+    score: int | float | str,
+    fallback: str,
+) -> str:
+    fit_text = str(fit or "").lower()
+    urgency_text = str(urgency or "").lower()
+    score_number = _safe_float(score)
+
+    if fit_text == "high" and (
+        urgency_text in {"same_day", "this_week"} or score_number >= 80
+    ):
+        return "Hot lead ready for owner review"
+    if fit_text == "high":
+        return "Strong lead needs a quick look"
+    if urgency_text in {"same_day", "this_week"}:
+        return "Time-sensitive lead needs review"
+    return fallback
+
+
+def _status_headline(status: str) -> str:
+    normalized = str(status or "").lower()
+    if "auto" in normalized and "sent" in normalized:
+        return "Safe first response sent"
+    if "approved" in normalized or "sent" in normalized:
+        return "Customer follow-up sent"
+    if "reject" in normalized:
+        return "Lead follow-up rejected"
+    if "approval" in normalized or "review" in normalized:
+        return "Lead waiting for review"
+    return f"Lead processed: {status or 'completed'}"
+
+
+def _safe_float(value: Any) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _best_profile_value(
+    profile: dict[str, Any],
+    *keys: str,
+    default: str,
+) -> str:
+    for key in keys:
+        value = str(profile.get(key) or "").strip()
+        if value and value != "<UNKNOWN>":
+            return value
+    return default
+
+
+def _profile_lines(profile: dict[str, Any]) -> list[str]:
+    priority = [
+        "business_type",
+        "company_name",
+        "pain_point",
+        "lead_volume",
+        "current_tools",
+        "service_interest",
+        "budget",
+        "timeline",
+        "team_size",
+        "website",
+    ]
+    lines: list[str] = []
+    seen: set[str] = set()
+
+    for key in priority:
+        value = profile.get(key)
+        if _is_meaningful_profile_value(value):
+            lines.append(_format_field(_humanize_key(key), value))
+            seen.add(key)
+
+    for key, value in sorted(profile.items()):
+        if key in seen or not _is_meaningful_profile_value(value):
+            continue
+        lines.append(_format_field(_humanize_key(key), value))
+        if len(lines) >= 10:
+            break
+
+    return lines
+
+
+def _is_meaningful_profile_value(value: Any) -> bool:
+    text = str(value or "").strip()
+    return bool(text and text != "<UNKNOWN>")
+
+
+def _humanize_key(key: str) -> str:
+    return key.replace("_", " ").title()
+
+
+def _latest_customer_message(transcript: list[dict[str, Any]]) -> str:
+    for item in reversed(transcript):
+        if str(item.get("role") or "").lower() == "customer":
+            content = str(item.get("content") or "").strip()
+            if content:
+                return _truncate(f"“{content}”", limit=550)
+    return ""
+
+
+def _transcript_lines(transcript: list[dict[str, Any]]) -> list[str]:
+    lines = []
+    for item in transcript:
+        role = str(item.get("role") or "unknown").strip().title()
+        content = str(item.get("content") or "").strip()
+        if content:
+            lines.append(f"{role}: {content}")
+    return lines
+
+
+def build_channel_owner_action_markup(lead_id: str) -> dict[str, Any]:
+    return {
+        "inline_keyboard": [
+            [
+                {
+                    "text": "✅ I'm handling this",
+                    "callback_data": f"channel:take_over:{lead_id}",
+                },
+                {
+                    "text": "📅 Mark booked",
+                    "callback_data": f"channel:mark_booked:{lead_id}",
+                },
+            ],
+            [
+                {
+                    "text": "❌ Close as not fit",
+                    "callback_data": f"channel:mark_not_fit:{lead_id}",
+                },
+            ],
+        ]
+    }
 
 
 def answer_callback_query(callback_query_id: str, text: str) -> dict[str, Any]:

@@ -76,7 +76,7 @@ def get_or_create_conversation(
             VALUES (%s, %s, %s)
             ON CONFLICT (source_channel, channel_user_id)
             DO UPDATE SET updated_at = now()
-            RETURNING id, source_channel, channel_user_id, lead_id, status, extracted_profile, created_at, updated_at;
+            RETURNING id, source_channel, channel_user_id, lead_id, status, extracted_profile, created_at, updated_at, last_owner_escalated_at;
             """,
             (source_channel, channel_user_id, lead_id),
         ).fetchone()
@@ -112,7 +112,7 @@ def get_conversation_context(
     with _connect() as conn:
         conversation = conn.execute(
             """
-            SELECT id, source_channel, channel_user_id, lead_id, status, extracted_profile, created_at, updated_at
+            SELECT id, source_channel, channel_user_id, lead_id, status, extracted_profile, created_at, updated_at, last_owner_escalated_at
             FROM channel_conversations
             WHERE source_channel = %s
               AND channel_user_id = %s
@@ -169,6 +169,42 @@ def update_conversation_state(
             ),
         ).fetchone()
     return dict(row)
+
+
+def mark_conversation_owner_action(
+    *,
+    lead_id: str,
+    action: str,
+) -> dict[str, Any]:
+    setup_channel_conversations()
+    status = _status_for_owner_action(action)
+    with _connect() as conn:
+        row = conn.execute(
+            """
+            UPDATE channel_conversations
+            SET status = %s,
+                updated_at = now()
+            WHERE lead_id = %s
+            RETURNING id, source_channel, channel_user_id, lead_id, status, extracted_profile, updated_at, last_owner_escalated_at;
+            """,
+            (status, lead_id),
+        ).fetchone()
+
+    if not row:
+        return {
+            "updated": False,
+            "lead_id": lead_id,
+            "reason": "No channel conversation found for lead_id.",
+        }
+    return dict(row)
+
+
+def _status_for_owner_action(action: str) -> str:
+    return {
+        "take_over": "owner_taking_over",
+        "mark_booked": "owner_marked_booked",
+        "mark_not_fit": "owner_marked_not_fit",
+    }.get(action, "owner_action_recorded")
 
 
 def _connect():

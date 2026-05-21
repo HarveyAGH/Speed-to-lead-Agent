@@ -138,6 +138,14 @@ Create `.env` from `.env.example`:
 cp .env.example .env
 ```
 
+For client onboarding and customization, use:
+
+```text
+CLIENT_SETUP_CHECKLIST.md
+```
+
+That file is the source of truth for agency profile changes, owner configuration, Airtable fields, form mappings, Telegram/WhatsApp setup, and pre-client testing.
+
 Required model config:
 
 ```bash

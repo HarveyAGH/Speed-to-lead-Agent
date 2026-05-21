@@ -94,6 +94,7 @@ def test_whatsapp_text_message_queues_channel_message(monkeypatch):
 
     assert result == {
         "processed": 1,
+        "duplicates_ignored": 0,
         "leads": [
             {
                 "status": "queued",

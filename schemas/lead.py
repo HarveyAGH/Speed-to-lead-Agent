@@ -90,7 +90,12 @@ class SupervisorDecision(BaseModel):
     urgency: UrgencyLevel
     score: int = Field(ge=0, le=100)
     recommended_next_action: NextAction
-    customer_message_status: Literal["drafted_only", "approval_requested", "sent", "not_applicable"]
+    customer_message_status: Literal[
+        "drafted_only",
+        "approval_requested",
+        "sent",
+        "not_applicable",
+    ]
     artifact_run_id: str
     artifact_paths: list[str]
     human_review_required: bool
@@ -101,8 +106,10 @@ class SupervisorDecision(BaseModel):
 ChannelConversationStatus = Literal[
     "continue_conversation",
     "qualified_escalate",
+    "qualified_handoff_pending_owner",
     "not_fit_close",
     "needs_human",
+    "customer_closed",
 ]
 
 ChannelNextAction = Literal[
@@ -110,6 +117,7 @@ ChannelNextAction = Literal[
     "handoff_to_owner",
     "close_not_fit",
     "needs_manual_review",
+    "end_conversation",
 ]
 
 

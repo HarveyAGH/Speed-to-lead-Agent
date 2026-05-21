@@ -4,11 +4,11 @@ This document is written for an external technical reviewer who understands Pyth
 
 ## Executive Summary
 
-This repository implements a LangGraph `StateGraph` workflow for a sellable "speed-to-lead" automation product.
+This repository implements a LangGraph `StateGraph` workflow plus messaging-channel intake for a sellable "speed-to-lead" automation product.
 
 The target buyer is a small service business, agency, clinic, or local operator that receives inbound leads and loses revenue when response time is slow or inconsistent.
 
-The current system receives a lead from a Tally form webhook, stores the lead in Airtable, queues background processing in Postgres, invokes an explicit LangGraph pipeline with specialist LLM nodes, saves evidence artifacts, writes run data back to Airtable, determines whether the draft is safe to auto-send or requires owner approval, sends Telegram owner notifications, and resumes approval-gated sends through LangGraph interrupt/resume.
+The current system receives structured leads from a Tally form webhook and live conversational leads from Telegram or WhatsApp. It stores leads in Airtable, queues background processing in Postgres, invokes the appropriate workflow in a worker process, saves evidence artifacts, writes run or messaging snapshots back to Airtable, sends chat-native customer replies, alerts the owner through Telegram when a lead needs human handoff, and resumes approval-gated form sends through LangGraph interrupt/resume.
 
 Real integrations currently implemented:
 
@@ -19,12 +19,18 @@ Real integrations currently implemented:
 - Postgres-backed background job queue.
 - Postgres-backed LangGraph checkpoint persistence.
 - Telegram owner notification and approval buttons.
+- WhatsApp inbound/outbound messaging through Meta Cloud API.
+- Telegram lead intake through the existing bot.
+- Postgres conversation storage for messaging channels.
+- Inbound webhook duplicate-event tracking.
 - LangSmith tracing through environment configuration.
 - Local evidence artifacts under `outputs/`.
 
 Intentionally simulated:
 
 - Actual customer email transport. "Sending" currently writes a local `sent_email.json` artifact instead of using Resend/Gmail/SMTP. This is deliberate while the system is still being hardened.
+- Production deployment/process management. The project is still local/ngrok oriented until the next deployment phase.
+- Full operational monitoring dashboard. Current visibility is `/health`, `/jobs`, LangSmith, Airtable rows, Postgres queries, and compact worker logs.
 
 ## Product Intent
 
@@ -491,10 +497,11 @@ These are the most important areas still worth reviewing.
 
 - No production authentication around `/webhooks/tally` unless `WEBHOOK_SHARED_SECRET` is configured and sent correctly.
 - Telegram webhook secret exists but depends on correct Telegram `setWebhook` configuration.
+- WhatsApp webhook signature verification exists when `WHATSAPP_APP_SECRET` is configured.
 - Manual `/approval/{lead_id}/approve` and `/reject` endpoints now require `WEBHOOK_SHARED_SECRET`, but they are still secondary legacy endpoints and can likely be removed once Telegram approval is the only owner approval path.
 - Public POST endpoints now have basic in-process rate limiting and content-length limits. A production edge proxy should still enforce these outside Python too.
 - No IP allowlist.
-- No replay protection for webhook payloads.
+- WhatsApp and Telegram lead-message duplicate events are tracked in Postgres through `inbound_events`. This reduces duplicate processing from webhook retries, but is not a complete signed timestamp replay-defense system.
 - Secrets live in `.env`; `.env` must never be committed.
 
 ### Reliability
@@ -503,9 +510,10 @@ These are the most important areas still worth reviewing.
 - Worker is a single process script, not a managed service.
 - No dead-letter queue.
 - Airtable and Telegram calls now use bounded retry/backoff for transient HTTP/network failures.
-- No idempotency key beyond `lead_id` duplicate checks.
+- Form jobs use lead duplicate checks. Messaging channels use conversation state plus inbound event IDs for webhook retry protection.
 - Airtable failures can requeue jobs depending on where the failure happens.
 - Telegram failures are returned after bounded retries; approval-required jobs now fail/requeue if the owner approval notification cannot be delivered.
+- Worker logs are now compact summaries rather than full Telegram/WhatsApp payload dumps.
 
 ### Data correctness
 
@@ -514,6 +522,7 @@ These are the most important areas still worth reviewing.
 - Inbound payloads are normalized, unknown Tally fields are ignored, and known fields are sanitized/length-limited. A stricter Pydantic validation layer is still pending.
 - `urgency` normalization is currently limited to `same_day`, `this_week`, and `low`.
 - Business configuration is still profile/prompt driven, not tenant-aware.
+- Client onboarding/customization guidance is consolidated in `CLIENT_SETUP_CHECKLIST.md`.
 
 ### Agent behavior
 
@@ -531,6 +540,38 @@ These are the most important areas still worth reviewing.
 - No process manager configuration for API + worker.
 - No production observability beyond LangSmith and local logs.
 
+Deployment readiness is explicitly **out of scope for the current audit snapshot** and is the next planned implementation phase. The next phase should include:
+
+- Deploy the FastAPI app and worker as separate processes.
+- Use a production Postgres database.
+- Move all secrets to managed environment variables.
+- Confirm Tally, Telegram, and WhatsApp webhook URLs point to the deployed API URL, not ngrok.
+- Configure health checks for the API process.
+- Configure worker restart policy.
+- Confirm Postgres checkpoint tables and app-owned queue/conversation tables are created in the production database.
+
+### Operational Monitoring
+
+Operational monitoring is explicitly **out of scope for the current audit snapshot** and is the second planned implementation phase after deployment readiness.
+
+Current visibility:
+
+- `GET /health`
+- `GET /jobs`
+- LangSmith traces
+- Airtable `Leads` and `Agent_runs`
+- Postgres `lead_jobs`, `channel_conversations`, `channel_messages`, `inbound_events`
+- compact worker logs
+
+Planned monitoring work:
+
+- Expand `/health` to actively verify Postgres, Airtable, Telegram, WhatsApp, and model connectivity.
+- Add `/jobs` filters for `failed`, `running`, `pending`, `waiting_approval`, and channel jobs.
+- Add a protected failed-job retry endpoint.
+- Add a protected conversation lookup endpoint for debugging channel state.
+- Add basic metrics for queue age, first-response latency, owner-notification latency, and failure rate.
+- Decide whether operational metrics live in Airtable, Postgres views, or a lightweight admin UI.
+
 ### Email
 
 - Real email provider is not connected.
@@ -543,35 +584,44 @@ These are the most important areas still worth reviewing.
 
 Recommended next implementation order:
 
-1. Safer auto-send guard:
+1. Deployment readiness:
+   - Deploy API and worker as separate processes.
+   - Use production Postgres.
+   - Configure environment variables outside source control.
+   - Confirm Tally, Telegram, and WhatsApp webhook URLs point to deployed URLs, not ngrok.
+   - Add process restart policies for API and worker.
+
+2. Operational monitoring:
+   - Expand `/health` with active dependency checks.
+   - Add `/jobs` filters for failed/running/pending/waiting jobs.
+   - Add a protected failed-job retry endpoint.
+   - Add conversation lookup/debug endpoints for support.
+   - Add queue and first-response latency metrics.
+
+3. Safer auto-send guard:
    - Add deterministic checks before `send_safe_followup_email`.
    - Block auto-send if draft contains pricing, guarantees, discounts, legal claims, calendar commitments, or missing recipient email.
 
-2. Airtable metrics dashboard:
+4. Airtable metrics dashboard:
    - Add deliberate Airtable fields for `queue_wait_seconds`, `owner_notification_seconds`, and `first_response_seconds`.
    - Write metrics to Airtable only after those fields exist so the API does not reject the whole update.
 
-3. Auth hardening:
+5. Auth hardening:
    - Remove legacy manual `/approval/{lead_id}/...` endpoints once Telegram approval is fully trusted.
    - Require shared secret for Tally webhook.
    - Confirm Telegram secret header is enforced in deployment.
    - Move rate limiting/request size protection to the deployment edge as well as the Python app.
 
-4. Real deployment:
-   - Deploy API and worker as separate processes.
-   - Use production Postgres.
-   - Configure environment variables outside source control.
-
-5. Real email provider:
+6. Real email provider:
    - Add Resend or Gmail only after the workflow is stable.
    - Keep simulation until then to avoid wasting free-tier/API quota during debugging.
 
-6. Minimal evals:
+7. Minimal evals:
    - Add tests for policy-violating drafts.
    - Add fixtures for hot lead, warm lead, bad fit, spam/vendor.
    - Assert expected send policy and final queue state.
 
-7. Multi-client configuration:
+8. Multi-client configuration:
    - Move agency profile/business rules toward tenant-specific config.
    - Avoid hardcoding one agency persona forever.
 
@@ -592,11 +642,11 @@ Please evaluate:
 
 ## My Status Rating
 
-I give this a status rating of: **76% production-shaped MVP after the first production-hardening pass**.
+I give this a status rating of: **84% production-shaped MVP after WhatsApp/Telegram messaging validation and the second production-hardening pass**.
 
 Meaning:
 
-- It is much stronger than a local demo because it has real webhook intake, Airtable, Postgres queueing, Postgres checkpointing, Telegram approval, deterministic send policy, queue timing metrics, and retry/backoff around external APIs.
-- It is not yet a production deployment because real email is simulated, deployment/process management is not finished, Airtable metrics dashboard fields are not wired, and deeper deterministic content-safety checks are still needed before fully trusting auto-send.
+- It is now stronger than a local demo because it has real webhook intake, Airtable, Postgres queueing, Postgres checkpointing, Telegram owner approval, WhatsApp inbound/outbound messaging, Telegram inbound messaging, conversation state, duplicate webhook event protection, deterministic send policy, owner handoff controls, and compact operational logs.
+- It is not yet a production deployment because deployment/process management is not finished, production monitoring is not built, real email is still simulated, and deeper deterministic content-safety checks are still needed before fully trusting all auto-send paths.
 
 What is YOUR rating compared to mine? Please give your percentage and explain the top 3 reasons your score differs.
