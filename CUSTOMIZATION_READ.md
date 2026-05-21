@@ -92,7 +92,7 @@ def get_agency_profile() -> str:
     return json.dumps(_read_json(MOCK_DATA_DIR / "agency_profile.json"), indent=2)
 ```
 
-That tool is available to the specialist agents.
+The graph loads this profile once in `load_lead_node`, then passes it inside the runtime context to each specialist agent.
 
 The specialist agents are created in:
 
@@ -131,9 +131,10 @@ Full path:
 
 ```text
 agency_profile.json
--> get_agency_profile tool
+-> get_agency_profile loaded by load_lead_node
+-> agency_profile added to graph state
+-> workflow_nodes.py passes agency_profile into each specialist runtime prompt
 -> specialist agent prompt
--> workflow_nodes.py node
 -> graph.py workflow
 ```
 

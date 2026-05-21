@@ -21,7 +21,7 @@ from agents.common import structured_or_last_message
 from tools.crm import save_run_artifacts
 from tools.decision_normalizer import normalize_decision
 from tools.email import write_sent_email_artifact
-from tools.lead_storage import load_lead
+from tools.lead_storage import get_agency_profile, load_lead
 
 
 def load_lead_node(state: LeadWorkflowState) -> dict[str, Any]:
@@ -29,27 +29,33 @@ def load_lead_node(state: LeadWorkflowState) -> dict[str, Any]:
 
     raw = load_lead.invoke({"lead_id": lead_id})
     lead = json.loads(raw)
+    agency_profile = json.loads(get_agency_profile.invoke({}))
 
     return {
         "lead": lead,
+        "agency_profile": agency_profile,
     }
 
 
 def qualify_node(state: LeadWorkflowState) -> dict[str, Any]:
     lead = state["lead"]
+    context = {
+        "lead": _lead_context(lead),
+        "agency_profile": state["agency_profile"],
+    }
 
     result = lead_qualifier_agent.invoke(
         {
             "messages": [
                 {
                     "role": "user",
-                    "content": json.dumps(lead, ensure_ascii=False),
+                    "content": json.dumps(context, ensure_ascii=False),
                 }
             ]
         }
     )
 
-    qualification = _extract_structured_dict(result)
+    qualification = _extract_structured_dict(result, "lead_qualifier_agent")
 
     return {
         "qualification": qualification,
@@ -58,19 +64,23 @@ def qualify_node(state: LeadWorkflowState) -> dict[str, Any]:
 
 def detect_missing_node(state: LeadWorkflowState) -> dict[str, Any]:
     lead = state["lead"]
+    context = {
+        "lead": _lead_context(lead),
+        "agency_profile": state["agency_profile"],
+    }
 
     result = missing_info_detector_agent.invoke(
         {
             "messages": [
                 {
                     "role": "user",
-                    "content": json.dumps(lead, ensure_ascii=False),
+                    "content": json.dumps(context, ensure_ascii=False),
                 }
             ]
         }
     )
 
-    missing_info = _extract_structured_dict(result)
+    missing_info = _extract_structured_dict(result, "missing_info_detector_agent")
 
     return {
         "missing_info": missing_info,
@@ -79,9 +89,10 @@ def detect_missing_node(state: LeadWorkflowState) -> dict[str, Any]:
 
 def draft_followup_node(state: LeadWorkflowState) -> dict[str, Any]:
     context = {
-        "lead": state["lead"],
-        "qualification": state["qualification"],
-        "missing_info": state["missing_info"],
+        "lead": _lead_context(state["lead"]),
+        "agency_profile": state["agency_profile"],
+        "qualification_summary": _qualification_summary(state["qualification"]),
+        "missing_info_summary": _missing_info_summary(state["missing_info"]),
     }
 
     result = followup_writer_agent.invoke(
@@ -95,7 +106,12 @@ def draft_followup_node(state: LeadWorkflowState) -> dict[str, Any]:
         }
     )
 
-    draft = _extract_structured_dict(result)
+    draft = _extract_structured_dict(result, "followup_writer_agent")
+    _require_non_empty_fields(
+        draft,
+        ("subject", "body", "recipient_email"),
+        "followup_writer_agent",
+    )
 
     return {
         "draft": draft,
@@ -104,10 +120,10 @@ def draft_followup_node(state: LeadWorkflowState) -> dict[str, Any]:
 
 def save_crm_note_node(state: LeadWorkflowState) -> dict[str, Any]:
     context = {
-        "lead": state["lead"],
-        "qualification": state["qualification"],
-        "missing_info": state["missing_info"],
-        "draft": state["draft"],
+        "lead": _lead_context(state["lead"]),
+        "qualification_summary": _qualification_summary(state["qualification"]),
+        "missing_info_summary": _missing_info_summary(state["missing_info"]),
+        "draft_summary": _draft_summary(state["draft"]),
     }
 
     result = crm_recorder_agent.invoke(
@@ -121,7 +137,12 @@ def save_crm_note_node(state: LeadWorkflowState) -> dict[str, Any]:
         }
     )
 
-    crm_note = _extract_structured_dict(result)
+    crm_note = _extract_structured_dict(result, "crm_recorder_agent")
+    _require_non_empty_fields(
+        crm_note,
+        ("crm_status", "summary"),
+        "crm_recorder_agent",
+    )
 
     return {
         "crm_note": crm_note,
@@ -133,12 +154,14 @@ def save_artifacts_node(state: LeadWorkflowState) -> dict[str, Any]:
     qualification = state["qualification"]
     missing_info = state["missing_info"]
     draft = state["draft"]
+    crm_note = state["crm_note"]
 
     raw_decision = {
         "lead_id": state["lead_id"],
         "classification": qualification.get("lead_type"),
         "fit": qualification.get("fit"),
         "urgency": qualification.get("urgency"),
+        "timeline": lead.get("timeline"),
         "score": qualification.get("score"),
         "recommended_next_action": qualification.get("recommended_next_action"),
     }
@@ -159,6 +182,7 @@ def save_artifacts_node(state: LeadWorkflowState) -> dict[str, Any]:
             "draft_subject": draft.get("subject", ""),
             "draft_body": draft.get("body", ""),
             "evidence_json": json.dumps(evidence),
+            "crm_note_json": json.dumps(crm_note),
         }
     )
 
@@ -250,7 +274,7 @@ def final_summary_node(state: LeadWorkflowState) -> dict[str, Any]:
             f"Final status: {state.get('final_status', 'pending')}",
             "",
             f"Draft subject: {draft.get('subject', '')}",
-            f"CRM note: {crm_note.get('note_path', '')}",
+            f"CRM note: {state.get('artifact_paths', {}).get('crm_note', '')}",
             f"Artifacts: {json.dumps(state.get('artifact_paths', {}), indent=2)}",
         ]
     )
@@ -285,7 +309,7 @@ def route_after_approval(
     return "do_not_send"
 
 
-def _extract_structured_dict(result: Any) -> dict[str, Any]:
+def _extract_structured_dict(result: Any, source_name: str) -> dict[str, Any]:
     structured = result.get("structured_response") if isinstance(result, dict) else None
 
     if structured is not None:
@@ -303,9 +327,98 @@ def _extract_structured_dict(result: Any) -> dict[str, Any]:
     except json.JSONDecodeError:
         pass
 
+    preview = content[:500] if isinstance(content, str) else repr(content)[:500]
+    raise ValueError(
+        f"{source_name} returned unparseable output. "
+        f"Expected structured JSON/Pydantic response, got: {preview!r}"
+    )
+
+
+def _lead_context(lead: dict[str, Any]) -> dict[str, Any]:
+    allowed_fields = (
+        "lead_id",
+        "received_at",
+        "name",
+        "email",
+        "company",
+        "role",
+        "source",
+        "service_interest",
+        "message",
+        "budget",
+        "timeline",
+        "website",
+        "status",
+    )
     return {
-        "raw_output": content,
+        field: _compact_value(lead.get(field))
+        for field in allowed_fields
+        if field in lead and lead.get(field) not in (None, "")
     }
+
+
+def _qualification_summary(qualification: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "lead_id": qualification.get("lead_id"),
+        "lead_type": qualification.get("lead_type"),
+        "fit": qualification.get("fit"),
+        "urgency": qualification.get("urgency"),
+        "score": qualification.get("score"),
+        "recommended_next_action": qualification.get("recommended_next_action"),
+        "rationale": _compact_value(qualification.get("rationale"), limit=900),
+        "disqualifying_risks": qualification.get("disqualifying_risks", []),
+    }
+
+
+def _missing_info_summary(missing_info: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "lead_id": missing_info.get("lead_id"),
+        "missing_required_fields": missing_info.get("missing_required_fields", []),
+        "missing_helpful_fields": missing_info.get("missing_helpful_fields", []),
+        "questions_to_ask": missing_info.get("questions_to_ask", []),
+        "can_respond_now": missing_info.get("can_respond_now"),
+        "rationale": _compact_value(missing_info.get("rationale"), limit=700),
+    }
+
+
+def _draft_summary(draft: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "lead_id": draft.get("lead_id"),
+        "recipient_email": draft.get("recipient_email"),
+        "subject": draft.get("subject"),
+        "body_preview": _compact_value(draft.get("body"), limit=700),
+        "personalization_points": draft.get("personalization_points", []),
+        "approval_required": draft.get("approval_required"),
+        "reason_approval_required": draft.get("reason_approval_required"),
+    }
+
+
+def _compact_value(value: Any, *, limit: int = 1200) -> Any:
+    if not isinstance(value, str):
+        return value
+
+    text = value.strip()
+    if len(text) <= limit:
+        return text
+
+    return f"{text[:limit].rstrip()}...[truncated]"
+
+
+def _require_non_empty_fields(
+    value: dict[str, Any],
+    fields: tuple[str, ...],
+    source_name: str,
+) -> None:
+    missing = [
+        field
+        for field in fields
+        if not str(value.get(field) or "").strip()
+    ]
+    if missing:
+        raise ValueError(
+            f"{source_name} returned incomplete structured output. "
+            f"Missing required fields: {', '.join(missing)}"
+        )
 
 
 def _normalize_approval_decision(value: Any) -> str:

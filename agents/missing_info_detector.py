@@ -8,13 +8,12 @@ from langchain.agents.structured_output import ToolStrategy
 
 from agents.common import load_prompt, require_json_text, structured_or_last_message
 from schemas.lead import MissingInfoReport
-from tools.lead_storage import get_agency_profile
 
 
 def build_missing_info_detector(model: Any):
     return create_agent(
         model=model,
-        tools=[get_agency_profile],
+        tools=[],
         system_prompt=load_prompt("missing_info_detector.md"),
         response_format=ToolStrategy(MissingInfoReport),
     )

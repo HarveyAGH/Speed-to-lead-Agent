@@ -8,41 +8,6 @@ from tools.airtable_client import airtable_is_configured, create_agent_run
 from tools.io_helpers import new_run_id, now_iso, output_run_dir, write_json, write_text
 from tools.decision_normalizer import normalize_decision
 
-
-
-@tool("save_crm_note", description="Save a CRM-style note for a qualified inbound lead.")
-def save_crm_note(
-    lead_id: str,
-    crm_status: str,
-    owner_summary: str,
-    next_action: str,
-    evidence_json: str,
-) -> str:
-    run_id = new_run_id(f"lead_{lead_id}")
-    note_path = output_run_dir(run_id) / "crm_note.md"
-    evidence = _loads_or_error(evidence_json, "invalid_evidence_json")
-    if "error" in evidence:
-        return json.dumps(evidence, indent=2)
-
-    note = "\n".join(
-        [
-            f"# CRM Note: {lead_id}",
-            "",
-            f"- Saved at: {now_iso()}",
-            f"- Status: {crm_status}",
-            f"- Next action: {next_action}",
-            "",
-            "## Owner Summary",
-            owner_summary,
-            "",
-            "## Evidence",
-            json.dumps(evidence, indent=2),
-            "",
-        ]
-    )
-    return write_text(note_path, note)
-
-
 @tool(
     "save_run_artifacts",
     description=(
@@ -55,6 +20,7 @@ def save_run_artifacts(
     draft_subject: str,
     draft_body: str,
     evidence_json: str,
+    crm_note_json: str = "",
 ) -> str:
     run_id = new_run_id(f"lead_{lead_id}")
     run_dir = output_run_dir(run_id)
@@ -65,6 +31,12 @@ def save_run_artifacts(
     evidence = _loads_or_error(evidence_json, "invalid_evidence_json")
     if "error" in evidence:
         return json.dumps(evidence, indent=2)
+
+    crm_note = {}
+    if crm_note_json:
+        crm_note = _loads_or_error(crm_note_json, "invalid_crm_note_json")
+        if "error" in crm_note:
+            return json.dumps(crm_note, indent=2)
 
     decision = normalize_decision(raw_decision, fallback_lead_id=lead_id)
     paths = {
@@ -78,6 +50,16 @@ def save_run_artifacts(
         ),
         "evidence": write_json(run_dir / "evidence.json", evidence),
     }
+    if crm_note:
+        paths["crm_note"] = write_text(
+            run_dir / "crm_note.md",
+            _build_crm_note_markdown(
+                lead_id=lead_id,
+                crm_note=crm_note,
+                evidence=evidence,
+                decision=decision,
+            ),
+        )
 
     airtable_result = None
     if airtable_is_configured():
@@ -109,6 +91,42 @@ def save_run_artifacts(
             "airtable": airtable_result or {"configured": False},
         },
         indent=2,
+    )
+
+
+def _build_crm_note_markdown(
+    *,
+    lead_id: str,
+    crm_note: dict,
+    evidence: dict,
+    decision: dict,
+) -> str:
+    summary = str(crm_note.get("summary") or "").strip()
+    saved_fields = crm_note.get("saved_fields") or []
+
+    return "\n".join(
+        [
+            f"# CRM Note: {lead_id}",
+            "",
+            f"- Saved at: {now_iso()}",
+            f"- CRM status: {crm_note.get('crm_status', '')}",
+            f"- Classification: {decision.get('classification', '')}",
+            f"- Fit: {decision.get('fit', '')}",
+            f"- Urgency: {decision.get('urgency', '')}",
+            f"- Score: {decision.get('score', '')}",
+            f"- Recommended action: {decision.get('recommended_next_action', '')}",
+            f"- Send policy: {decision.get('send_policy', '')}",
+            "",
+            "## Owner Summary",
+            summary,
+            "",
+            "## Saved Fields",
+            json.dumps(saved_fields, indent=2),
+            "",
+            "## Evidence",
+            json.dumps(evidence, indent=2),
+            "",
+        ]
     )
 
 

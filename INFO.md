@@ -280,7 +280,7 @@ Artifact and CRM note writer.
 
 Main responsibilities:
 
-- Save CRM-style markdown note.
+- Save CRM-style markdown note into the same canonical run folder as the other artifacts.
 - Save:
   - `decision.json`
   - `draft_message.txt`

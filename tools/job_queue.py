@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from threading import Lock
 from typing import Any
 
 import psycopg
@@ -10,6 +11,8 @@ from config import POSTGRES_DB_URI
 
 
 STALE_RUNNING_MINUTES = 10
+_queue_setup_lock = Lock()
+_queue_setup_done = False
 
 JOB_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS lead_jobs (
@@ -50,12 +53,23 @@ def queue_is_configured() -> bool:
 
 
 def setup_job_queue() -> None:
-    with _connect() as conn:
-        conn.execute(JOB_TABLE_SQL)
-        conn.execute(JOB_INDEX_SQL)
-        for statement in JOB_METRICS_SQL:
-            conn.execute(statement)
-        conn.execute(JOB_FINGERPRINT_INDEX_SQL)
+    global _queue_setup_done
+
+    if _queue_setup_done:
+        return
+
+    with _queue_setup_lock:
+        if _queue_setup_done:
+            return
+
+        with _connect() as conn:
+            conn.execute(JOB_TABLE_SQL)
+            conn.execute(JOB_INDEX_SQL)
+            for statement in JOB_METRICS_SQL:
+                conn.execute(statement)
+            conn.execute(JOB_FINGERPRINT_INDEX_SQL)
+
+        _queue_setup_done = True
 
 
 def enqueue_lead_job(

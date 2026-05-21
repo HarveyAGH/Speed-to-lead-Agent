@@ -78,7 +78,6 @@ Tools do reliable actions:
 
 ```text
 load_lead
-save_crm_note
 save_run_artifacts
 send_safe_followup_email
 send_followup_email
@@ -86,6 +85,8 @@ send_owner_approval_request
 ```
 
 Tools should not be mysterious. Each tool should read data, write data, or perform one external action.
+
+CRM note writing is now owned by `save_run_artifacts`, so decision, draft, evidence, and `crm_note.md` land in one canonical run folder.
 
 ### Subagents
 

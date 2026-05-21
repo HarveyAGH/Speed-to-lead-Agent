@@ -11,6 +11,7 @@ class LeadWorkflowState(TypedDict, total=False):
     lead_id: str
 
     lead: dict[str, Any]
+    agency_profile: dict[str, Any]
 
     qualification: dict[str, Any]
     missing_info: dict[str, Any]

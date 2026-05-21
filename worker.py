@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import time
 import traceback
 from typing import Any
@@ -25,6 +26,9 @@ from tools.job_queue import (
 )
 from tools.airtable_client import update_latest_agent_run_status
 from tools.telegram import send_owner_approval_request, send_owner_status_notification
+
+
+logger = logging.getLogger("lead_worker")
 
 
 def process_one_job() -> dict[str, Any] | None:
@@ -136,11 +140,11 @@ def process_one_job() -> dict[str, Any] | None:
 def run_worker(poll_interval: float) -> None:
     setup_job_queue()
     recover_stale_running_jobs()
-    print("Lead worker started. Waiting for queued jobs...")
+    logger.info("Lead worker started. Waiting for queued jobs.")
     while True:
         result = process_one_job()
         if result:
-            print(result)
+            logger.info("job_result=%s", json.dumps(result, default=str))
             continue
         time.sleep(poll_interval)
 
@@ -214,6 +218,7 @@ def _notification_delivered(result: dict[str, Any] | None) -> bool:
 
 
 def main() -> int:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     parser = argparse.ArgumentParser(description="Process queued lead intake jobs.")
     parser.add_argument("--once", action="store_true", help="Process one job and exit.")
     parser.add_argument("--poll-interval", type=float, default=2.0)

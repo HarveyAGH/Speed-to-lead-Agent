@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
 from collections import defaultdict, deque
 from time import monotonic
@@ -46,6 +47,7 @@ from tools.telegram import (
 
 app = FastAPI(title="Lead Intake Agent API")
 _rate_limit_windows: dict[str, deque[float]] = defaultdict(deque)
+logger = logging.getLogger("lead_api")
 
 
 @app.middleware("http")
@@ -112,6 +114,10 @@ def tally_webhook(
     existing_lead = find_lead_by_id(lead["lead_id"])
     existing_run = _latest_agent_run_fields(lead["lead_id"]) if existing_lead else {}
     if existing_run:
+        logger.info(
+            "tally_webhook status=duplicate_ignored lead_id=%s reason=existing_agent_run",
+            lead["lead_id"],
+        )
         return {
             "status": "duplicate_ignored",
             "lead_id": lead["lead_id"],
@@ -122,6 +128,11 @@ def tally_webhook(
     lead_fingerprint = build_lead_fingerprint(lead)
     duplicate_job = find_existing_job_by_fingerprint(lead_fingerprint)
     if duplicate_job and duplicate_job["lead_id"] != lead["lead_id"]:
+        logger.info(
+            "tally_webhook status=duplicate_fingerprint_ignored lead_id=%s duplicate_of=%s",
+            lead["lead_id"],
+            duplicate_job.get("lead_id"),
+        )
         return {
             "status": "duplicate_fingerprint_ignored",
             "lead_id": lead["lead_id"],
@@ -134,6 +145,11 @@ def tally_webhook(
 
     active_job = find_active_job_by_lead_id(lead["lead_id"])
     if active_job:
+        logger.info(
+            "tally_webhook status=duplicate_queued lead_id=%s job_id=%s",
+            lead["lead_id"],
+            active_job.get("id"),
+        )
         return {
             "status": "duplicate_queued",
             "lead_id": lead["lead_id"],
@@ -152,6 +168,11 @@ def tally_webhook(
         lead["lead_id"],
         lead,
         lead_fingerprint=lead_fingerprint,
+    )
+    logger.info(
+        "tally_webhook status=queued lead_id=%s job_id=%s",
+        lead["lead_id"],
+        job.get("id"),
     )
 
     return {

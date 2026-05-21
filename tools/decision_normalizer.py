@@ -49,6 +49,7 @@ VALID_OWNER_ALERT_LEVELS = {"urgent", "normal", "none"}
 VALID_LEAD_TEMPERATURES = {"hot", "warm", "cold", "spam"}
 
 
+
 def normalize_decision(raw: dict[str, Any], fallback_lead_id: str = "") -> dict[str, Any]:
     classification_text = _text(
         raw.get("classification")
@@ -63,9 +64,18 @@ def normalize_decision(raw: dict[str, Any], fallback_lead_id: str = "") -> dict[
         or raw.get("next_action")
     )
 
+    timeline_text = _text(
+        raw.get("timeline")
+        or raw.get("lead_timeline")
+        or raw.get("requested_timeline")
+    )
+
     classification = _normalize_classification(classification_text)
     fit = _normalize_choice(raw.get("fit"), VALID_FITS, default="medium")
-    urgency = _normalize_choice(raw.get("urgency"), VALID_URGENCIES, default="low")
+    urgency = _normalize_urgency(
+        model_urgency=raw.get("urgency"),
+        timeline=timeline_text,
+    )
     score = _normalize_score(raw.get("score"))
     next_action = _normalize_next_action(recommended_text, classification_text)
     policy = _derive_send_policy(
@@ -98,6 +108,60 @@ def _normalize_choice(value: Any, allowed: set[str], default: str) -> str:
     if text in allowed:
         return text
     return default
+
+def _normalize_urgency(model_urgency: Any, timeline: str = "") -> str:
+    timeline_text = timeline.lower().replace("-", " ").replace("_", " ")
+
+    same_day_signals = (
+        "today",
+        "same day",
+        "same-day",
+        "asap",
+        "immediately",
+        "right away",
+        "now",
+        "urgent",
+        "emergency",
+        "within 24 hours",
+        "24 hours",
+    )
+
+    this_week_signals = (
+        "this week",
+        "a week",
+        "next few days",
+        "few days",
+        "within 5 days",
+        "5 days",
+        "within a week",
+        "this month",
+        "next 2 weeks",
+        "two weeks",
+        "2 weeks",
+    )
+
+    low_signals = (
+        "next month",
+        "sometime",
+        "eventually",
+        "not urgent",
+        "no rush",
+        "later",
+        "exploring",
+        "researching",
+    )
+
+    if any(signal in timeline_text for signal in same_day_signals):
+        return "same_day"
+
+    if any(signal in timeline_text for signal in this_week_signals):
+        return "this_week"
+
+    if any(signal in timeline_text for signal in low_signals):
+        return "low"
+
+    return _normalize_choice(model_urgency, VALID_URGENCIES, default="low")
+
 
 
 def _normalize_score(value: Any) -> int:
@@ -238,3 +302,57 @@ def _derive_send_policy(
         "owner_alert_level": "normal",
         "send_policy_reason": "Default safe first response; no high-risk action detected.",
     }
+
+
+
+
+
+
+def test_normalize_decision_uses_timeline_over_model_urgency_for_this_week():
+    decision = normalize_decision(
+        {
+            "lead_id": "lead_timeline",
+            "classification": "high_intent_sales_call",
+            "fit": "high",
+            "urgency": "same_day",
+            "timeline": "this week",
+            "score": 82,
+            "recommended_next_action": "book_discovery_call",
+        }
+    )
+
+    assert decision["urgency"] == "this_week"
+    assert decision["owner_alert_level"] == "normal"
+
+
+def test_normalize_decision_keeps_same_day_for_explicit_asap_timeline():
+    decision = normalize_decision(
+        {
+            "lead_id": "lead_asap",
+            "classification": "high_intent_sales_call",
+            "fit": "high",
+            "urgency": "this_week",
+            "timeline": "ASAP today",
+            "score": 82,
+            "recommended_next_action": "book_discovery_call",
+        }
+    )
+
+    assert decision["urgency"] == "same_day"
+    assert decision["owner_alert_level"] == "urgent"
+
+
+def test_normalize_decision_falls_back_to_model_urgency_when_timeline_is_unclear():
+    decision = normalize_decision(
+        {
+            "lead_id": "lead_unclear",
+            "classification": "high_intent_sales_call",
+            "fit": "high",
+            "urgency": "this_week",
+            "timeline": "soon",
+            "score": 82,
+            "recommended_next_action": "book_discovery_call",
+        }
+    )
+
+    assert decision["urgency"] == "this_week"

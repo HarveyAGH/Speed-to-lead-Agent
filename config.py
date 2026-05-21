@@ -5,7 +5,12 @@ from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
-from langchain_aws import ChatBedrock
+
+try:
+    from langchain_aws import ChatBedrockConverse
+except ImportError:
+    ChatBedrockConverse = None
+    from langchain_aws import ChatBedrock
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -15,10 +20,16 @@ load_dotenv(dotenv_path=PROJECT_ROOT / ".env", override=True)
 BEDROCK_MODEL_ID = os.getenv("BEDROCK_MODEL_ID", "global.anthropic.claude-haiku-4-5-20251001-v1:0")
 BEDROCK_REGION = os.getenv("BEDROCK_REGION", "us-east-1")
 
-llm = ChatBedrock(
-    model_id=BEDROCK_MODEL_ID,
-    region_name=BEDROCK_REGION,
-)
+if ChatBedrockConverse is not None:
+    llm = ChatBedrockConverse(
+        model=BEDROCK_MODEL_ID,
+        region_name=BEDROCK_REGION,
+    )
+else:
+    llm = ChatBedrock(
+        model_id=BEDROCK_MODEL_ID,
+        region_name=BEDROCK_REGION,
+    )
 
 
 
@@ -36,7 +47,7 @@ OWNER_CONFIG_PATH = Path(
 AIRTABLE_API_KEY = os.getenv("AIRTABLE_API_KEY", "")
 AIRTABLE_BASE_ID = os.getenv("AIRTABLE_BASE_ID", "")
 AIRTABLE_LEADS_TABLE = os.getenv("AIRTABLE_LEADS_TABLE", "Leads")
-AIRTABLE_AGENT_RUNS_TABLE = os.getenv("AIRTABLE_AGENT_RUNS_TABLE", "Agent Runs")
+AIRTABLE_AGENT_RUNS_TABLE = os.getenv("AIRTABLE_AGENT_RUNS_TABLE", "Agent_runs")
 WEBHOOK_SHARED_SECRET = os.getenv("WEBHOOK_SHARED_SECRET", "")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_OWNER_CHAT_ID = os.getenv("TELEGRAM_OWNER_CHAT_ID", "")

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import random
 import time
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -63,4 +64,5 @@ def _sleep_before_retry(
     else:
         delay = base_delay * (2 ** (attempt - 1))
 
-    time.sleep(min(delay, 5.0))
+    jitter = random.uniform(0, base_delay)
+    time.sleep(min(delay + jitter, 5.0))

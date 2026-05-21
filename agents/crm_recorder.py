@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from typing import Any
-from tools.decision_normalizer import normalize_decision
 
 
 from langchain.agents import create_agent
@@ -10,13 +9,12 @@ from langchain.agents.structured_output import ToolStrategy
 
 from agents.common import load_prompt, require_json_text, structured_or_last_message
 from schemas.lead import CrmNoteReport
-from tools.crm import save_crm_note
 
 
 def build_crm_recorder(model: Any):
     return create_agent(
         model=model,
-        tools=[save_crm_note],
+        tools=[],
         system_prompt=load_prompt("crm_recorder.md"),
         response_format=ToolStrategy(CrmNoteReport),
     )

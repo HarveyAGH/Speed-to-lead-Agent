@@ -98,7 +98,7 @@ Important tool files:
 ```text
 tools/lead_storage.py = loads leads from Airtable or mock data
 tools/airtable_client.py = talks to Airtable API
-tools/crm.py = saves CRM notes, artifacts, and Agent_runs rows
+tools/crm.py = saves decision/draft/evidence/crm_note artifacts and Agent_runs rows in one run folder
 tools/decision_normalizer.py = turns messy agent decisions into stable fields and send policy
 tools/email.py = handles approval-gated sends and safe simulated auto-sends
 tools/telegram.py = formats and sends owner approval messages with draft previews and handles Telegram API calls
