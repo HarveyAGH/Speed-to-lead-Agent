@@ -170,6 +170,236 @@ Rule:
 If the agent is judging whether someone is a good lead, the logic belongs here.
 ```
 
+#### Key-Level Customization Rules
+
+Do not treat every JSON key the same way. Some keys are read by Python code, some are read only by the LLM, and some are legacy names that still need to stay stable until the code is changed.
+
+Plain English:
+
+```text
+Changing a value usually changes behavior safely.
+Renaming a key may silently disconnect that data from the code or prompt.
+Removing a key is safe only when no code, prompt, Airtable field, or form mapping expects it.
+```
+
+##### `agency_name`
+
+What it means:
+
+```text
+Legacy/internal label for "the business or offer this agent represents."
+For an agency demo, this is the agency name.
+For a clinic, law firm, roofing company, or locksmith, put the client's business name here.
+```
+
+Why the key still exists:
+
+```text
+The code and prompts already pass/read agency_profile.agency_name. Renaming the key to business_name without updating code can make the LLM lose the business identity.
+```
+
+Safe customization:
+
+```json
+"agency_name": "Clearview Dental"
+```
+
+If you want the key to be called `business_name` instead:
+
+```text
+1. Go to templates/_starter_template/agency_profile.json and add business_name.
+2. Go to mock_data/agency_profile.json and add business_name.
+3. Go to worker.py and update _channel_agency_profile_context() to read profile.get("business_name") or profile.get("agency_name").
+4. Go to workflow_nodes.py and update any agency context helper to pass business_name.
+5. Go to prompts/lead_qualifier.md, prompts/followup_writer.md, and prompts/speed_to_lead_chat.md if they mention agency_profile identity.
+6. Run the full tests.
+```
+
+Recommended for now:
+
+```text
+Keep the key name agency_name. Put the client business name as the value.
+```
+
+##### `services`
+
+What it does:
+
+```text
+The LLM reads this to understand what the business offers and whether the lead is asking for something relevant.
+```
+
+Safe customization:
+
+```json
+"services": [
+  "Invisalign consultations",
+  "dental implant consultations",
+  "emergency dental appointments"
+]
+```
+
+Do not remove this key unless:
+
+```text
+1. You replace it with another key such as service_lines.
+2. You update prompts to tell the LLM to use service_lines.
+3. You update worker.py / workflow_nodes.py context filtering helpers to pass service_lines.
+```
+
+##### `ideal_customer_profile`
+
+What it does:
+
+```text
+The LLM reads this as the qualification rulebook. It decides fit, bad fit, urgency, and ROI fit from this section.
+```
+
+Safe customization:
+
+```text
+Change the values freely.
+Keep the key unless you are also changing the prompts and context helpers.
+```
+
+Good keys inside it:
+
+```text
+business_type
+buyer_types
+monthly_ai_automation_budget_usd
+min_monthly_revenue_for_automation
+min_monthly_lead_volume_for_automation
+preferred_timeline_for_automation
+bad_fit_signals
+```
+
+Budget and timeline note:
+
+```text
+If a business does not want to ask budget/timeline early, do not necessarily remove every budget/timeline key from agency_profile. Instead, change the rule from "must ask immediately" to "use if disclosed; otherwise qualify from volume, urgency, and pain."
+```
+
+Example:
+
+```json
+"ideal_customer_profile": {
+  "business_type": ["dental clinic", "orthodontic clinic"],
+  "min_monthly_lead_volume_for_automation": 15,
+  "budget_disclosure_policy": "Do not ask budget in the first message. If budget is not disclosed, qualify from lead volume, urgency, and pain severity.",
+  "preferred_timeline_for_automation": "within 14 days",
+  "bad_fit_signals": ["vendor pitch", "job seeker", "medical diagnosis request"]
+}
+```
+
+If you remove budget as a qualification concept:
+
+```text
+1. Remove budget from required_fields_for_sales_call.
+2. Remove or soften budget language in prompts/speed_to_lead_chat.md.
+3. Remove or soften budget language in prompts/lead_qualifier.md only if form leads should stop using budget.
+4. Update test scripts so medium/hot lead examples prove the new rule.
+5. Run a hot, medium, and not-fit test.
+```
+
+##### `required_fields_for_sales_call`
+
+What it does:
+
+```text
+The missing-info detector reads this for form leads.
+The chat agent may also see it through compact channel profile context.
+It tells the system what information is required before confidently booking/escalating.
+```
+
+If a client does not want to ask for budget:
+
+```json
+"required_fields_for_sales_call": [
+  "service_interest",
+  "timeline",
+  "website"
+]
+```
+
+If a client does not want to ask timeline:
+
+```json
+"required_fields_for_sales_call": [
+  "service_interest",
+  "budget",
+  "website"
+]
+```
+
+If the client runs a messaging-first workflow:
+
+```text
+Keep this short. Messaging should not feel like a form.
+For chat, prefer asking one or two high-signal questions at a time.
+```
+
+If you rename a required field:
+
+```text
+1. Rename it in agency_profile.json.
+2. If it comes from Tally, update app.py -> _normalize_field_name().
+3. Add it to normalize_lead_payload if it is a new internal field.
+4. Add the Airtable column if it should be stored.
+5. Mention the new field in prompts/missing_info_detector.md if the LLM needs special reasoning.
+```
+
+##### `helpful_fields`, `urgent_lead_signals`, `qualification_rules`, `safety_rules`
+
+What they do:
+
+```text
+These are LLM-readable business rules. Python code mostly just passes them through when present.
+They are safe places to add niche-specific judgment without changing code.
+```
+
+Examples:
+
+```json
+"urgent_lead_signals": [
+  "patient wants appointment this week",
+  "high-value treatment interest",
+  "lead says they are comparing providers now"
+],
+"qualification_rules": {
+  "hot": "High-value treatment interest + near-term appointment need + reachable contact details.",
+  "medium": "Real patient inquiry but missing urgency, location, or treatment interest.",
+  "not_fit": "Vendor pitch, job seeker, medical emergency, or asks for diagnosis."
+}
+```
+
+If these keys are ignored by a node:
+
+```text
+1. Check workflow_nodes.py context helpers for form workflow.
+2. Check worker.py -> _channel_agency_profile_context() for messaging workflow.
+3. Make sure the prompt tells the LLM to use those keys.
+```
+
+##### `owner` and `crm_statuses`
+
+What they do:
+
+```text
+These are legacy/form-workflow support fields.
+owner is weaker than owner_configuration.json and should not be the main owner source.
+crm_statuses is mostly reference context.
+```
+
+Recommended:
+
+```text
+Do not customize owner here unless a specific prompt still depends on it.
+Put owner identity in owner_configuration.json instead.
+```
+
+If token optimization removes these from LLM context, that is usually safe.
+
 ### `mock_data/owner_configuration.json`
 
 This controls owner-facing identity and handoff behavior.
@@ -202,6 +432,191 @@ Rule:
 
 ```text
 If it changes who the owner is or how handoff looks, it belongs here.
+```
+
+#### Owner Configuration Key Rules
+
+This file is not the qualification brain. It is the identity and handoff config.
+
+##### `owner_name`
+
+What it does:
+
+```text
+Used in owner-facing alerts and customer handoff messages such as "Ahmed will follow up."
+```
+
+Customize the value:
+
+```json
+"owner_name": "Dr. Sarah Lee"
+```
+
+Do not rename the key unless you update:
+
+```text
+tools/owner_config.py
+worker.py
+tools/telegram.py
+```
+
+##### `business_name`
+
+What it does:
+
+```text
+Used in customer-facing closing/handoff language and owner alerts.
+For clinics, law firms, roofers, etc., this should be the client business name.
+```
+
+Customize:
+
+```json
+"business_name": "Clearview Dental"
+```
+
+##### `sender_name` and `sender_title`
+
+What they do:
+
+```text
+Used mainly by the Tally/form email follow-up workflow.
+Messaging channels usually speak as the business assistant and escalate to owner_name.
+```
+
+If the client does not want a named sender:
+
+```text
+Keep the keys, but use neutral values.
+```
+
+Example:
+
+```json
+"sender_name": "Clearview Dental Team",
+"sender_title": "Patient Coordination Team"
+```
+
+If you remove these keys:
+
+```text
+1. Check workflow_nodes.py -> _owner_draft_context().
+2. Check prompts/followup_writer.md.
+3. Run one Tally/form lead test because email drafting depends on these fields.
+```
+
+##### `discovery_call_url`
+
+What it does:
+
+```text
+Used by both form follow-up drafts and messaging handoff replies. If present, qualified leads may receive this booking link.
+```
+
+If the client does not want calendar links:
+
+```json
+"discovery_call_url": ""
+```
+
+Then verify:
+
+```text
+1. Messaging qualified handoff asks the lead to wait for the owner instead of booking.
+2. Form follow-up asks for availability instead of inventing a link.
+```
+
+Do not delete the key unless you update:
+
+```text
+worker.py -> _discovery_call_url()
+workflow_nodes.py -> _owner_draft_context()
+prompts/followup_writer.md
+prompts/speed_to_lead_chat.md
+```
+
+##### `timezone`
+
+What it does:
+
+```text
+Mostly useful for scheduling language and future calendar integrations.
+Current chat logic does not heavily depend on it.
+```
+
+Safe to keep. If unknown, use the client's local timezone or leave it blank.
+
+##### `approval_channel`
+
+What it does:
+
+```text
+Documentation/config intent for where owner approvals go. Current implementation is Telegram-based.
+```
+
+Do not assume changing this to `whatsapp` magically moves owner alerts. To change owner alert channels, update Telegram alert code and channel dispatch logic.
+
+##### `approval_policy_note`
+
+What it does:
+
+```text
+Human-readable policy note for owner behavior. It is useful documentation but should not be heavily passed into customer-facing chat context.
+```
+
+Safe customization:
+
+```json
+"approval_policy_note": "Escalate urgent patients, pricing questions, complaints, and uncertain medical language."
+```
+
+If it starts affecting model behavior, make sure the relevant prompt explicitly tells the LLM how to use it.
+
+## 4A. If You Want To Rename Or Remove Keys
+
+Use this checklist before changing JSON key names.
+
+```text
+1. Search the repo for the key name.
+2. Decide whether the key is code-read or LLM-only.
+3. If code-read, update Python helpers before renaming.
+4. If LLM-only, update the prompt that explains the key.
+5. If it comes from a form, update app.py field mapping.
+6. If it is stored in Airtable, update Airtable columns and writeback code.
+7. Add or update a test script proving the new behavior.
+8. Run pytest.
+9. Run one real smoke test through the affected channel.
+```
+
+Useful commands:
+
+```bash
+grep -RIn "agency_name" prompts agents tools workflow_nodes.py worker.py app.py
+grep -RIn "required_fields_for_sales_call" prompts agents tools workflow_nodes.py worker.py app.py
+grep -RIn "discovery_call_url" prompts agents tools workflow_nodes.py worker.py app.py
+```
+
+Example: remove budget from an early chat workflow without breaking the system:
+
+```text
+1. In agency_profile.json, remove "budget" from required_fields_for_sales_call.
+2. Add a rule inside ideal_customer_profile:
+   "budget_disclosure_policy": "Do not ask budget early. Qualify from lead volume, urgency, and pain. Ask budget only after fit is clear."
+3. In prompts/speed_to_lead_chat.md, soften or remove any rule that forces budget early.
+4. In test_scripts.md, create a hot lead that never discloses budget but has strong volume and urgency.
+5. Run a WhatsApp/Telegram smoke test.
+6. Confirm the AI does not force budget too early and still escalates strong leads.
+```
+
+Example: replace `timeline` with `appointment_urgency` for a clinic form:
+
+```text
+1. In Tally, change the label to "How soon do you want an appointment?"
+2. In app.py -> _normalize_field_name(), map that label to "timeline" if you want to keep the existing internal field.
+3. If you truly want a new field named appointment_urgency, add it to normalize_lead_payload and Airtable.
+4. Add "appointment_urgency" to helpful_fields or required_fields_for_sales_call.
+5. Update prompts/missing_info_detector.md if the missing-info agent should treat it specially.
+6. Run one form smoke test and check Airtable + LangSmith.
 ```
 
 ### `prompts/speed_to_lead_chat.md`

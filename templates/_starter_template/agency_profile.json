@@ -10,7 +10,9 @@
       "{{BEST_FIT_BUYER_TYPE}}"
     ],
     "minimum_budget_or_volume": "{{MINIMUM_BUDGET_OR_VOLUME}}",
-    "preferred_timeline": "{{PREFERRED_TIMELINE}}",
+    "budget_disclosure_policy": "{{WHEN_TO_ASK_BUDGET_OR_VOLUME}}",
+    "preferred_timeline": "{{PREFERRED_TIMELINE_OR_URGENCY_RULE}}",
+    "timeline_disclosure_policy": "{{WHEN_TO_ASK_TIMELINE_OR_URGENCY}}",
     "bad_fit_signals": [
       "{{BAD_FIT_SIGNAL_1}}",
       "{{BAD_FIT_SIGNAL_2}}"
@@ -33,7 +35,9 @@
   "qualification_rules": {
     "hot": "{{HOT_LEAD_RULE}}",
     "medium": "{{MEDIUM_LEAD_RULE}}",
-    "not_fit": "{{NOT_FIT_LEAD_RULE}}"
+    "not_fit": "{{NOT_FIT_LEAD_RULE}}",
+    "escalate_to_owner": "{{WHEN_TO_NOTIFY_OWNER}}",
+    "close_conversation": "{{WHEN_THE_AI_SHOULD_STOP_TALKING}}"
   },
   "safety_rules": [
     "{{CLIENT_SAFETY_RULE_1}}",
