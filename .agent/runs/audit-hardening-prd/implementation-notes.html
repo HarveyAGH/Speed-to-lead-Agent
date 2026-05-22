@@ -92,10 +92,10 @@
   <h2>Resume Here</h2>
   <ul>
     <li><strong>Status:</strong> [done] Required audit hardening fixes implemented and full test suite passes.</li>
-    <li><strong>Current phase:</strong> Commit and push.</li>
+    <li><strong>Current phase:</strong> Finished.</li>
     <li><strong>Completed work:</strong> Added atomic Postgres approval claim helper, switched approval resume paths to claim before graph resume, covered claimed/already-claimed callback behavior, sanitized lead IDs for path use, guarded output run directories against escaping <code>OUTPUT_DIR</code>, required webhook secrets unless explicit local-dev bypass is enabled, extracted workflow runner helpers out of <code>app.py</code>, removed <code>worker.py</code> importing <code>app.py</code>, and narrowed nurture detection away from generic <code>respond</code>.</li>
     <li><strong>Blockers:</strong> None recorded.</li>
-    <li><strong>Next action:</strong> Stage PRD-scoped files, commit, and push <code>main</code>.</li>
+    <li><strong>Next action:</strong> None for this PRD. Code hardening commit <code>9c828bf</code> was pushed to <code>origin/main</code>.</li>
     <li><strong>Last validation:</strong> <code>.venv/bin/python -m pytest</code> -> 85 passed.</li>
     <li><strong>Protected paths:</strong> Existing unrelated prompt rewrite in <code>prompts/lead_qualifier.md</code> remains outside the PRD commit scope.</li>
   </ul>
@@ -164,6 +164,13 @@
         phase: "required-fixes",
         actor: "agent",
         summary: "M-03, H-03, and M-02 are implemented; full pytest suite reports 85 passed."
+      },
+      {
+        ts: "2026-05-22T02:34:14Z",
+        status: "done",
+        phase: "handoff",
+        actor: "agent",
+        summary: "PRD-scoped code changes committed as 9c828bf and pushed to origin/main."
       }
     ];
 
