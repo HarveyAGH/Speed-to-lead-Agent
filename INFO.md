@@ -40,7 +40,7 @@ Real integrations currently implemented:
 
 Intentionally simulated / still out of scope:
 
-- Actual customer email transport. "Sending" currently writes a local `sent_email.json` artifact instead of using Resend/Gmail/SMTP. This is deliberate while the system is still being hardened.
+- Customer email defaults to simulated `sent_email.json` artifacts for local/dev safety. Production email delivery is now available only when `EMAIL_TRANSPORT=resend` and Resend credentials are configured.
 - Production deployment/process management. The project is still local/ngrok oriented until the next deployment phase.
 - Full operational monitoring dashboard. Current visibility is `/health`, `/jobs`, LangSmith, Airtable rows, Postgres queries, and compact worker logs.
 
@@ -82,7 +82,7 @@ Tally form
 -> Airtable Agent_runs row
 -> deterministic send policy
 -> safe auto-send OR Telegram approval
--> simulated sent_email.json
+-> simulated or Resend sent_email.json metadata
 ```
 
 ## Important Files
@@ -177,10 +177,7 @@ Important design choice:
 - Routing is deterministic through graph edges and `decision_normalizer.py`.
 - Risky customer-facing sends pause at `approval_gate_node`.
 - Safe sends go through `send_node` without requiring owner approval.
-7. Use the normalized send policy:
-   - `approval_required`: call `send_followup_email`, which interrupts.
-   - `auto_send`: do not call the send tool; worker handles safe auto-send.
-   - `do_not_send`: do not send.
+- `send_node` calls `send_customer_email`, which dispatches to simulated artifact mode or Resend based on `EMAIL_TRANSPORT`.
 
 ### `tools/decision_normalizer.py`
 
@@ -229,21 +226,23 @@ Why this file is important:
 
 ### `tools/email.py`
 
-Simulated customer-facing email output.
+Customer-facing email transport boundary.
 
-Tools:
+Main functions:
 
-- `send_followup_email`: approval-gated send using `interrupt()`.
-- `send_safe_followup_email`: non-interrupting safe auto-send for low-risk first responses.
+- `send_customer_email`: dispatches to the configured transport.
+- `write_sent_email_artifact`: records the send artifact for simulated and provider-backed sends.
 
-Current transport:
+Current transports:
 
 ```text
-simulated_file_write
+simulated
 simulated_safe_auto_send
+simulated_approved_send
+resend
 ```
 
-No real email API is called yet.
+Resend calls use the shared retrying HTTP helper and record provider response metadata in `sent_email.json`.
 
 ### `tools/job_queue.py`
 
@@ -388,10 +387,10 @@ Last known result:
 3. Graph runs supervisor.
 4. Supervisor delegates to subagents.
 5. Artifacts are saved.
-6. If risky send: graph interrupts via `send_followup_email`.
+6. If risky send: graph interrupts at `approval_gate_node`.
 7. If no interrupt: worker reads `decision.json`.
 8. Worker applies send policy:
-   - `auto_send`: call `send_safe_followup_email`.
+   - `auto_send`: graph calls `send_customer_email`.
    - `do_not_send`: mark no send.
    - default/succeeded: mark complete.
 9. Worker sends Telegram status notification or approval request.
@@ -406,7 +405,7 @@ Last known result:
 5. App removes buttons.
 6. App calls `resume_lead_send(lead_id, decision)`.
 7. Graph resumes with `Command(resume=decision)` using the same `thread_id`.
-8. If approved, simulated send writes `sent_email.json`.
+8. If approved, `send_customer_email` writes `sent_email.json` and sends through Resend only when explicitly configured.
 9. App patches Airtable `approval_status`.
 10. App updates queue status.
 11. App edits Telegram message to collapsed final status.
@@ -586,8 +585,8 @@ Planned monitoring work:
 
 ### Email
 
-- Real email provider is not connected.
-- Resend/Gmail/SMTP integration is intentionally delayed.
+- Resend integration exists behind `EMAIL_TRANSPORT=resend`.
+- Local/dev mode still defaults to simulated artifacts with `EMAIL_TRANSPORT=simulated`.
 - No bounce/error handling.
 - No unsubscribe/compliance layer.
 - No domain authentication flow.
@@ -611,7 +610,7 @@ Recommended next implementation order:
    - Add queue and first-response latency metrics.
 
 3. Safer auto-send guard:
-   - Add deterministic checks before `send_safe_followup_email`.
+   - Add deterministic checks before `send_customer_email`.
    - Block auto-send if draft contains pricing, guarantees, discounts, legal claims, calendar commitments, or missing recipient email.
 
 4. Airtable metrics dashboard:
@@ -624,9 +623,10 @@ Recommended next implementation order:
    - Confirm Telegram secret header is enforced in deployment.
    - Move rate limiting/request size protection to the deployment edge as well as the Python app.
 
-6. Real email provider:
-   - Add Resend or Gmail only after the workflow is stable.
-   - Keep simulation until then to avoid wasting free-tier/API quota during debugging.
+6. Email deliverability hardening:
+   - Add provider error classification and bounce handling.
+   - Add unsubscribe/compliance policy before broad outbound use.
+   - Keep `EMAIL_TRANSPORT=simulated` for local debugging.
 
 7. Minimal evals:
    - Add tests for policy-violating drafts.
@@ -658,7 +658,7 @@ I give this a status rating of: **87% production-shaped MVP after WhatsApp/Teleg
 
 Meaning:
 
-- It is now stronger than a local demo because it has real webhook intake, Airtable, Postgres queueing, Postgres checkpointing, Telegram owner approval, WhatsApp inbound/outbound messaging, Telegram inbound messaging, conversation state, duplicate webhook event protection, deterministic send policy, owner handoff controls, bounded LLM context for messaging conversations, and compact operational logs.
-- It is not yet a production deployment because deployment/process management is not finished, production monitoring is not built, real email is still simulated, and deeper deterministic content-safety checks are still needed before fully trusting all auto-send paths.
+- It is now stronger than a local demo because it has real webhook intake, Airtable, Postgres queueing, Postgres checkpointing, Telegram owner approval, WhatsApp inbound/outbound messaging, Telegram inbound messaging, conversation state, duplicate webhook event protection, deterministic send policy, owner handoff controls, bounded LLM context for messaging conversations, optional Resend email transport, and compact operational logs.
+- It is not yet a production deployment because deployment/process management is not finished, production monitoring is not built, email deliverability/compliance is not hardened, and deeper deterministic content-safety checks are still needed before fully trusting all auto-send paths.
 
 What is YOUR rating compared to mine? Please give your percentage and explain the top 3 reasons your score differs.

@@ -16,7 +16,7 @@ from state import LeadWorkflowState
 from agents.common import structured_or_last_message
 from tools.crm import save_run_artifacts
 from tools.decision_normalizer import normalize_decision
-from tools.email import write_sent_email_artifact
+from tools.email import send_customer_email
 from tools.lead_storage import get_agency_profile, load_lead
 from tools.owner_config import get_owner_config
 
@@ -207,16 +207,11 @@ def send_node(state: LeadWorkflowState) -> dict[str, Any]:
     decision = state["decision"]
     policy = state.get("send_policy") or decision.get("send_policy") or "approval_required"
 
-    sent_email = write_sent_email_artifact(
+    sent_email = send_customer_email(
         lead_id=state["lead_id"],
         to=lead.get("email", ""),
         subject=draft.get("subject", ""),
         body=draft.get("body", ""),
-        transport=(
-            "simulated_safe_auto_send"
-            if policy == "auto_send"
-            else "simulated_approved_send"
-        ),
         approval_required=policy != "auto_send",
         send_policy=policy,
         send_policy_reason=decision.get("send_policy_reason", ""),

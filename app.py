@@ -16,6 +16,10 @@ from config import (
     RATE_LIMIT_REQUESTS,
     RATE_LIMIT_WINDOW_SECONDS,
     AGENCY_PROFILE_PATH,
+    EMAIL_TRANSPORT,
+    RESEND_API_KEY,
+    RESEND_FROM_EMAIL,
+    RESEND_REPLY_TO_EMAIL,
     TELEGRAM_ALLOW_OWNER_AS_LEAD,
     TELEGRAM_WEBHOOK_SECRET,
     WEBHOOK_SHARED_SECRET,
@@ -81,6 +85,25 @@ def validate_startup_config() -> None:
             "WEBHOOK_SHARED_SECRET is required. Set "
             "ALLOW_INSECURE_LOCAL_WEBHOOKS=true only for local development."
         )
+    if EMAIL_TRANSPORT not in {"simulated", "resend"}:
+        raise RuntimeError(
+            "Unsupported EMAIL_TRANSPORT. Use EMAIL_TRANSPORT=simulated or "
+            "EMAIL_TRANSPORT=resend."
+        )
+    if EMAIL_TRANSPORT == "resend":
+        missing = [
+            name
+            for name, value in (
+                ("RESEND_API_KEY", RESEND_API_KEY),
+                ("RESEND_FROM_EMAIL", RESEND_FROM_EMAIL),
+                ("RESEND_REPLY_TO_EMAIL", RESEND_REPLY_TO_EMAIL),
+            )
+            if not value
+        ]
+        if missing:
+            raise RuntimeError(
+                "EMAIL_TRANSPORT=resend requires: " + ", ".join(missing)
+            )
 
 
 @app.middleware("http")

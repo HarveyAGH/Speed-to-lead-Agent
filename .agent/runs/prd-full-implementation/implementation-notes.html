@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PRD full implementation - Implementation Notes</title>
+  <style>
+    body {
+      color: #202124;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.55;
+      margin: 0 auto;
+      max-width: 920px;
+      padding: 40px 24px;
+    }
+    h1, h2 { line-height: 1.2; }
+    code {
+      background: #f1f3f4;
+      border-radius: 4px;
+      padding: 2px 5px;
+    }
+    .meta {
+      background: #f8f9fa;
+      border: 1px solid #dadce0;
+      border-radius: 8px;
+      padding: 16px;
+    }
+    .timeline {
+      background: #f8f9fa;
+      border: 1px solid #dadce0;
+      border-radius: 8px;
+      max-height: 360px;
+      overflow: auto;
+      padding: 8px;
+    }
+    .timeline-note {
+      color: #5f6368;
+      margin-bottom: 10px;
+    }
+    .event {
+      background: #fff;
+      border: 1px solid #e8eaed;
+      border-radius: 8px;
+      margin: 8px 0;
+      padding: 12px 14px;
+    }
+    .event-head {
+      align-items: center;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 6px;
+    }
+    .event-summary {
+      margin: 0;
+    }
+    .event time {
+      color: #5f6368;
+      font-size: 13px;
+    }
+    .badge, .phase, .actor {
+      border-radius: 999px;
+      display: inline-block;
+      font-size: 12px;
+      font-weight: 700;
+      line-height: 1;
+      padding: 5px 8px;
+      text-transform: uppercase;
+    }
+    .badge { background: #e8f0fe; color: #174ea6; }
+    .status-done, .status-validated { background: #e6f4ea; color: #137333; }
+    .status-blocked, .status-failed { background: #fce8e6; color: #c5221f; }
+    .status-decision { background: #fef7e0; color: #b06000; }
+    .phase, .actor {
+      background: #f1f3f4;
+      color: #3c4043;
+      font-weight: 600;
+    }
+    li { margin: 6px 0; }
+  </style>
+</head>
+<body>
+  <h1>PRD full implementation</h1>
+  <div class="meta">
+    <p><strong>Goal ID:</strong> <code>prd-full-implementation</code></p>
+    <p><strong>Started:</strong> 2026-05-22T04:52:37Z</p>
+    <p><strong>Parent goal:</strong> audit-report-followup</p>
+    <p><strong>Mode:</strong> full</p>
+    <p><strong>Objective:</strong> Implement C:/Users/Fleun/OneDrive/Desktop/PRD.md fully in /home/snowaflic/Multi-agents while preserving existing lead intake, messaging, queue, checkpointer, Airtable, LangSmith, and worker flows, then pass the full pytest suite, commit, and push.</p>
+  </div>
+
+  <h2>Resume Here</h2>
+  <ul>
+    <li><strong>Status:</strong> Implementation complete and validated. Commit/push is the only remaining handoff step.</li>
+    <li><strong>Current phase:</strong> Stage only PRD-owned files, commit, push, then mark the native goal complete.</li>
+    <li><strong>Blockers:</strong> None recorded.</li>
+    <li><strong>Next action:</strong> Commit with message <code>Add production email transport and niche template</code>.</li>
+    <li><strong>Protected paths:</strong> Do not stage unrelated <code>prompts/lead_qualifier.md</code> or pre-existing line-ending churn in <code>tests/test_telegram_webhook.py</code>.</li>
+  </ul>
+
+  <h2>Progress Timeline</h2>
+  <p class="timeline-note">Progress is rendered directly in this file from the inline <code>progressEvents</code> array below. Append a new event to that array whenever execution reality changes meaningfully.</p>
+  <div id="progress-timeline" class="timeline"></div>
+
+  <h2>Decisions Outside The Spec</h2>
+  <ul>
+    <li>Followed the specific Phase 5 instruction to add only <code>templates/_starter_template</code>. The PRD's later "Dental clinic template exists" definition line conflicts with that explicit instruction, so no finished dental template was created.</li>
+    <li>Kept <code>RESEND_REPLY_TO_EMAIL</code> required when <code>EMAIL_TRANSPORT=resend</code> because the PRD listed it with the required Resend configuration surface.</li>
+  </ul>
+
+  <h2>Changes And Tradeoffs</h2>
+  <ul>
+    <li>Added explicit email transport config in <code>config.py</code> and startup validation in <code>app.py</code> for supported modes and missing Resend values.</li>
+    <li>Moved customer email dispatch behind <code>tools/email.py::send_customer_email</code>. Simulated mode preserves the existing artifact behavior and transport labels; Resend mode uses the shared retrying HTTP helper and records provider metadata in <code>sent_email.json</code>.</li>
+    <li>Updated <code>workflow_nodes.py</code> so the graph calls the transport boundary instead of hardcoding simulated artifact writes.</li>
+    <li>Added transport tests, startup validation tests, and starter template files under <code>templates/_starter_template/</code>.</li>
+    <li>Updated <code>README.md</code>, <code>CLIENT_SETUP_CHECKLIST.md</code>, <code>INFO.md</code>, and <code>.env.example</code> for email modes, Resend setup, template usage, token expectations, channel distinctions, smoke tests, and out-of-scope boundaries.</li>
+  </ul>
+
+  <h2>Validation</h2>
+  <ul>
+    <li>Baseline before implementation: <code>git status --short</code> showed existing dirty files including unrelated <code>prompts/lead_qualifier.md</code>; <code>git log --oneline -8</code> showed HEAD <code>3018738 Address audit report follow-up findings</code>.</li>
+    <li>Baseline full suite before implementation: <code>.venv/bin/python -m pytest</code> passed with <code>93 passed</code>.</li>
+    <li>Targeted validation after email changes: <code>.venv/bin/python -m pytest tests/test_email_transport.py tests/test_webhook_payload.py tests/test_workflow_hardening.py</code> passed with <code>29 passed</code>.</li>
+    <li>Final validation: <code>.venv/bin/python -m pytest</code> passed with <code>99 passed in 4.87s</code>.</li>
+  </ul>
+
+  <h2>Evidence</h2>
+  <ul>
+    <li>No bulky evidence artifacts were needed. The command summaries above are sufficient for this implementation.</li>
+  </ul>
+
+  <h2>Next Goal Candidates</h2>
+  <ul>
+    <li>Deployment readiness: API/worker process setup, production Postgres, deployed webhook URLs, restart policy.</li>
+    <li>Email deliverability hardening: provider error classification, bounce handling, unsubscribe/compliance, domain authentication checklist.</li>
+    <li>Operational monitoring: dependency health checks, queue latency metrics, failed-job retry controls, support lookup endpoints.</li>
+  </ul>
+  <script>
+    const progressEvents = [
+      {
+        ts: "2026-05-22T04:52:37Z",
+        status: "created",
+        phase: "start",
+        actor: "agent",
+        summary: "Goal ledger created."
+      },
+      {
+        ts: "2026-05-22T04:55:00Z",
+        status: "validated",
+        phase: "baseline",
+        actor: "agent",
+        summary: "Recorded baseline git status/log and confirmed the pre-change test suite passed with 93 tests."
+      },
+      {
+        ts: "2026-05-22T04:59:00Z",
+        status: "done",
+        phase: "implementation",
+        actor: "agent",
+        summary: "Added explicit simulated/resend email transport handling, startup validation, Resend API dispatch, and artifact metadata."
+      },
+      {
+        ts: "2026-05-22T05:02:00Z",
+        status: "done",
+        phase: "docs-templates",
+        actor: "agent",
+        summary: "Added starter template files and updated README, client checklist, INFO, and env example for production email and onboarding."
+      },
+      {
+        ts: "2026-05-22T05:03:59Z",
+        status: "validated",
+        phase: "final-test",
+        actor: "agent",
+        summary: "Full test suite passed with 99 tests."
+      }
+    ];
+
+    function escapeHtml(value) {
+      return String(value || "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    function renderEvent(event) {
+      const status = escapeHtml(event.status || "event");
+      const phase = escapeHtml(event.phase || "general");
+      const actor = escapeHtml(event.actor || "agent");
+      const timestamp = escapeHtml(event.ts || "");
+      const summary = escapeHtml(event.summary || "");
+      return `
+        <article class="event">
+          <div class="event-head">
+            <span class="badge status-${status}">${status}</span>
+            <span class="phase">${phase}</span>
+            <span class="actor">${actor}</span>
+            <time datetime="${timestamp}">${timestamp}</time>
+          </div>
+          <p class="event-summary">${summary}</p>
+        </article>
+      `;
+    }
+
+    function renderProgressTimeline() {
+      const target = document.getElementById("progress-timeline");
+      const events = Array.isArray(progressEvents) ? progressEvents : [];
+      if (events.length === 0) {
+        target.innerHTML = "<p>No progress events recorded yet.</p>";
+        return;
+      }
+      target.innerHTML = events.map(renderEvent).join("");
+    }
+    renderProgressTimeline();
+  </script>
+</body>
+</html>

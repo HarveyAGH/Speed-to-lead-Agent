@@ -1,0 +1,42 @@
+{
+  "agency_name": "{{CLIENT_BUSINESS_NAME}}",
+  "business_type": "{{CLIENT_BUSINESS_TYPE}}",
+  "services": [
+    "{{PRIMARY_SERVICE}}",
+    "{{SECONDARY_SERVICE}}"
+  ],
+  "ideal_customer_profile": {
+    "buyer_types": [
+      "{{BEST_FIT_BUYER_TYPE}}"
+    ],
+    "minimum_budget_or_volume": "{{MINIMUM_BUDGET_OR_VOLUME}}",
+    "preferred_timeline": "{{PREFERRED_TIMELINE}}",
+    "bad_fit_signals": [
+      "{{BAD_FIT_SIGNAL_1}}",
+      "{{BAD_FIT_SIGNAL_2}}"
+    ]
+  },
+  "urgent_lead_signals": [
+    "{{URGENT_SIGNAL_1}}",
+    "{{URGENT_SIGNAL_2}}"
+  ],
+  "required_fields_for_sales_call": [
+    "name",
+    "email",
+    "service_interest",
+    "timeline"
+  ],
+  "helpful_fields": [
+    "{{HELPFUL_FIELD_1}}",
+    "{{HELPFUL_FIELD_2}}"
+  ],
+  "qualification_rules": {
+    "hot": "{{HOT_LEAD_RULE}}",
+    "medium": "{{MEDIUM_LEAD_RULE}}",
+    "not_fit": "{{NOT_FIT_LEAD_RULE}}"
+  },
+  "safety_rules": [
+    "{{CLIENT_SAFETY_RULE_1}}",
+    "{{CLIENT_SAFETY_RULE_2}}"
+  ]
+}

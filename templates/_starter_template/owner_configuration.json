@@ -1,0 +1,10 @@
+{
+  "owner_name": "{{OWNER_NAME}}",
+  "business_name": "{{CLIENT_BUSINESS_NAME}}",
+  "sender_name": "{{SENDER_NAME}}",
+  "sender_title": "{{SENDER_TITLE}}",
+  "discovery_call_url": "{{BOOKING_URL}}",
+  "timezone": "{{CLIENT_TIMEZONE}}",
+  "approval_channel": "telegram",
+  "approval_policy_note": "{{OWNER_APPROVAL_POLICY_NOTE}}"
+}

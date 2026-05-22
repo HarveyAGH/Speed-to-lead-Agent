@@ -41,7 +41,32 @@ Messaging channels are live conversations.
 Do not treat messaging leads like email drafts.
 ```
 
-## 2. Client Information To Collect
+## 2. Choose Or Create The Niche Template
+
+Start from:
+
+```text
+templates/_starter_template/
+```
+
+Copy it to a niche or client folder, then edit in this order:
+
+```text
+1. agency_profile.json
+2. owner_configuration.json
+3. test_scripts.md
+```
+
+After the niche/client files are complete, copy the JSON files into `mock_data/` for local testing:
+
+```text
+mock_data/agency_profile.json
+mock_data/owner_configuration.json
+```
+
+Do not create one-off private client wording in the core repo unless this repo copy belongs only to that client.
+
+## 3. Client Information To Collect
 
 Collect this before changing code.
 
@@ -88,7 +113,7 @@ When should the AI stop talking?
 When should a calendar link be sent?
 ```
 
-## 3. Main Files To Customize
+## 4. Main Files To Customize
 
 ### `mock_data/agency_profile.json`
 
@@ -227,7 +252,7 @@ Customize these when form leads need industry-specific reasoning.
 
 The live chat workflow does not use these prompts for customer conversation.
 
-## 4. Form Field Customization
+## 5. Form Field Customization
 
 The form field contract is in:
 
@@ -286,7 +311,7 @@ If the client does not want Budget on the form, remove it from the form and from
 Leave the code field as an empty optional value unless every budget reference has been audited.
 ```
 
-## 5. Airtable Setup
+## 6. Airtable Setup
 
 Create or confirm two tables:
 
@@ -344,7 +369,7 @@ owner_marked_booked
 owner_marked_not_fit
 ```
 
-## 6. Environment Variables
+## 7. Environment Variables
 
 Start from `.env.example`.
 
@@ -371,6 +396,26 @@ AIRTABLE_LEADS_TABLE=Leads
 AIRTABLE_AGENT_RUNS_TABLE=Agent_runs
 ```
 
+Email:
+
+```bash
+EMAIL_TRANSPORT=simulated
+RESEND_API_KEY=
+RESEND_FROM_EMAIL=
+RESEND_REPLY_TO_EMAIL=
+```
+
+Use `EMAIL_TRANSPORT=simulated` for local demos and development. It writes `sent_email.json` artifacts and does not call a provider. Use `EMAIL_TRANSPORT=resend` only when the client is ready for real customer email, and set all Resend values before startup.
+
+Webhook secret:
+
+```bash
+WEBHOOK_SHARED_SECRET=
+ALLOW_INSECURE_LOCAL_WEBHOOKS=true
+```
+
+Production must set `WEBHOOK_SHARED_SECRET`. The local insecure flag is only for local development.
+
 Telegram owner alerts:
 
 ```bash
@@ -389,6 +434,8 @@ WHATSAPP_VERIFY_TOKEN=
 WHATSAPP_APP_SECRET=
 ```
 
+Temporary Meta access tokens are acceptable for local testing only. Production WhatsApp should use a long-lived System User token with the required WhatsApp permissions.
+
 Public URL:
 
 ```bash
@@ -397,7 +444,7 @@ PUBLIC_BASE_URL=https://your-public-domain.example
 
 Local testing can use ngrok. Production must use the deployed API URL.
 
-## 7. Channel Setup
+## 8. Channel Setup
 
 ### Tally / Website Form
 
@@ -412,6 +459,8 @@ If `WEBHOOK_SHARED_SECRET` is set, send it as:
 ```text
 X-Webhook-Secret: <secret>
 ```
+
+Tally/form leads run the form workflow and can produce email-style drafts. WhatsApp and Telegram messages run the live messaging workflow and should produce short chat-native replies.
 
 ### Telegram Owner Approval
 
@@ -443,7 +492,7 @@ Webhook event subscription:
 messages
 ```
 
-## 8. When The AI Should Stop
+## 9. When The AI Should Stop
 
 The AI stops or avoids another LLM call when:
 
@@ -456,7 +505,7 @@ The AI stops or avoids another LLM call when:
 
 This protects tokens and prevents the bot from continuing after a human owns the conversation.
 
-## 9. Test Checklist Before Showing A Client
+## 10. Test Checklist Before Showing A Client
 
 Run tests:
 
@@ -483,11 +532,13 @@ curl http://localhost:8000/health
 Test paths:
 
 ```text
-1. Submit one Tally/form lead.
-2. Send one low-fit vendor message.
-3. Send one medium/not-ready real business message.
-4. Send one high-fit urgent WhatsApp message.
-5. Click owner action in Telegram.
+1. Submit one Tally/form lead with EMAIL_TRANSPORT=simulated.
+2. Approve a form workflow Telegram owner button when approval is required.
+3. Send one low-fit vendor message.
+4. Send one medium/not-ready real business message.
+5. Send one high-fit urgent WhatsApp message.
+6. Send one high-fit urgent Telegram lead message.
+7. Click owner action in Telegram for a messaging escalation.
 ```
 
 Confirm:
@@ -504,7 +555,16 @@ Worker logs are compact.
 Duplicate WhatsApp/Telegram events do not create duplicate jobs.
 ```
 
-## 10. Industry Template Strategy
+Inspection commands:
+
+```bash
+psql "$POSTGRES_DB_URI" -c "select id, lead_id, job_type, status, first_response, updated_at from lead_jobs order by updated_at desc limit 10;"
+psql "$POSTGRES_DB_URI" -c "select conversation_id, channel, status, updated_at from channel_conversations order by updated_at desc limit 10;"
+find outputs -name sent_email.json -print
+find outputs -maxdepth 2 -type f -print | sort | tail -40
+```
+
+## 11. Industry Template Strategy
 
 Keep one clean core repo, then create client-ready templates from it.
 
@@ -546,7 +606,7 @@ One-off client wording belongs in that client's repo/config.
 Do not pollute the core repo with one client's private workflow unless it is reusable.
 ```
 
-## 11. Client Handoff Checklist
+## 12. Client Handoff Checklist
 
 Before calling the client implementation ready:
 
@@ -566,3 +626,11 @@ Before calling the client implementation ready:
 [ ] No real email provider is enabled unless intentionally configured.
 ```
 
+## 13. Out Of Scope For This Phase
+
+```text
+production deployment
+production monitoring
+advanced analytics dashboard
+full OAuth CRM integrations
+```

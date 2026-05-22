@@ -19,7 +19,7 @@ Tally form submission
 -> deterministic send policy
 -> safe first response auto-send or Telegram owner approval
 -> graph resume after approval when needed
--> simulated sent-email artifact
+-> email transport (simulated file artifact by default, Resend optional)
 ```
 
 ## Buyer
@@ -82,12 +82,12 @@ Tally
 -> specialist assessment and draft nodes
 -> save artifacts + Agent_runs row
 -> decision_normalizer derives send_policy
--> if auto_send: graph writes simulated sent_email.json
+-> if auto_send: graph sends through the configured email transport
 -> if approval_required: approval_gate calls interrupt()
 -> Telegram approval message with decision snapshot and draft preview
 -> /telegram/webhook receives button click
 -> graph resumes with Command(resume="approve" or "reject")
--> simulated sent_email.json artifact
+-> sent_email.json artifact with simulated or Resend transport metadata
 ```
 
 ## Messaging Channel Flow
@@ -116,10 +116,12 @@ The form workflow can draft email-style replies because the lead already submitt
 - Local artifacts are real files under `outputs/`.
 - Human approval is real via LangGraph `interrupt()` for risky sends.
 - Safe first response auto-send is real in the worker, but still simulated by a local file write.
+- Production email delivery is available with Resend when `EMAIL_TRANSPORT=resend`.
 - Telegram approval buttons are real via Telegram Bot API.
 - Telegram approval messages include the latest saved Airtable `Agent_runs` decision and draft.
 - LangSmith tracing is real when LangSmith env vars are configured.
-- Email sending is still simulated by writing `sent_email.json`; no real email is sent yet.
+- Email sending defaults to simulated `sent_email.json` artifacts for local/dev safety.
+- Resend can send production email when explicitly configured.
 - Telegram and WhatsApp inbound messages are routed through a dedicated conversation workflow, not the form/email workflow.
 
 ## Setup
@@ -170,6 +172,41 @@ TELEGRAM_OWNER_CHAT_ID=
 TELEGRAM_WEBHOOK_SECRET=
 PUBLIC_BASE_URL=https://your-ngrok-domain.example
 ```
+
+Email transport:
+
+```bash
+EMAIL_TRANSPORT=simulated
+RESEND_API_KEY=
+RESEND_FROM_EMAIL=
+RESEND_REPLY_TO_EMAIL=
+```
+
+Use `EMAIL_TRANSPORT=simulated` for local development and demos. This keeps customer email sends as local `outputs/email_<lead_id>.../sent_email.json` artifacts. Use `EMAIL_TRANSPORT=resend` only in production-style testing or client pilots, and set all three Resend variables before startup.
+
+Webhook safety:
+
+```bash
+WEBHOOK_SHARED_SECRET=
+ALLOW_INSECURE_LOCAL_WEBHOOKS=true
+```
+
+Production must set `WEBHOOK_SHARED_SECRET`. Leave `ALLOW_INSECURE_LOCAL_WEBHOOKS=true` only for local development.
+
+WhatsApp token note:
+
+```text
+Temporary Meta access tokens are acceptable only for local testing.
+Production should use a long-lived System User token with the required WhatsApp permissions.
+```
+
+Client templates:
+
+```text
+templates/_starter_template/
+```
+
+Copy the starter template into a niche/client folder, edit `agency_profile.json` first, edit `owner_configuration.json` second, write hot/medium/not-fit test scripts, then copy the finalized JSON files into `mock_data/` for local testing.
 
 ## Airtable Setup
 
@@ -324,6 +361,59 @@ same workflow as above
 send_followup_email pauses with interrupt()
 human types approve
 sent_email.json artifact is written
+```
+
+## Smoke Test Plan
+
+Run the full test suite first:
+
+```bash
+.venv/bin/python -m pytest
+```
+
+Tally/form simulated email path:
+
+```text
+1. Set EMAIL_TRANSPORT=simulated.
+2. Start FastAPI and worker.
+3. Submit a Tally or flat JSON lead to POST /webhooks/tally.
+4. Approve the Telegram owner button if approval is required.
+5. Confirm outputs/email_<lead_id>.../sent_email.json exists.
+```
+
+WhatsApp hot lead path:
+
+```text
+1. Send a qualified, urgent WhatsApp message through the Meta webhook.
+2. Confirm a channel_message job is processed.
+3. Confirm the customer reply is short and chat-native.
+4. Confirm the owner Telegram escalation appears when the lead is qualified or needs human review.
+```
+
+Telegram hot lead path:
+
+```text
+1. Send a qualified, urgent Telegram message to the bot.
+2. Confirm the messaging path is used instead of the Tally/form workflow.
+3. Confirm the owner escalation and Airtable messaging snapshot are created.
+```
+
+Useful local inspection commands:
+
+```bash
+psql "$POSTGRES_DB_URI" -c "select id, lead_id, job_type, status, first_response, updated_at from lead_jobs order by updated_at desc limit 10;"
+psql "$POSTGRES_DB_URI" -c "select conversation_id, channel, status, updated_at from channel_conversations order by updated_at desc limit 10;"
+find outputs -name sent_email.json -print
+find outputs -maxdepth 2 -type f -print | sort | tail -40
+```
+
+Out of scope for this repo phase:
+
+```text
+production deployment
+production monitoring
+advanced analytics dashboard
+full OAuth CRM integrations
 ```
 
 ## Demo Script

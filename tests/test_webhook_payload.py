@@ -133,6 +133,7 @@ def test_startup_requires_webhook_secret_unless_local_flag(monkeypatch, tmp_path
     monkeypatch.setattr(app, "OWNER_CONFIG_PATH", owner_config)
     monkeypatch.setattr(app, "WEBHOOK_SHARED_SECRET", "")
     monkeypatch.setattr(app, "ALLOW_INSECURE_LOCAL_WEBHOOKS", False)
+    monkeypatch.setattr(app, "EMAIL_TRANSPORT", "simulated")
 
     with pytest.raises(RuntimeError, match="WEBHOOK_SHARED_SECRET is required"):
         app.validate_startup_config()
@@ -148,5 +149,41 @@ def test_startup_allows_missing_webhook_secret_for_explicit_local_dev(monkeypatc
     monkeypatch.setattr(app, "OWNER_CONFIG_PATH", owner_config)
     monkeypatch.setattr(app, "WEBHOOK_SHARED_SECRET", "")
     monkeypatch.setattr(app, "ALLOW_INSECURE_LOCAL_WEBHOOKS", True)
+    monkeypatch.setattr(app, "EMAIL_TRANSPORT", "simulated")
 
     app.validate_startup_config()
+
+
+def test_startup_rejects_unsupported_email_transport(monkeypatch, tmp_path):
+    agency_profile = tmp_path / "agency_profile.json"
+    agency_profile.write_text("{}", encoding="utf-8")
+    owner_config = tmp_path / "owner_configuration.json"
+    owner_config.write_text("{}", encoding="utf-8")
+
+    monkeypatch.setattr(app, "AGENCY_PROFILE_PATH", agency_profile)
+    monkeypatch.setattr(app, "OWNER_CONFIG_PATH", owner_config)
+    monkeypatch.setattr(app, "WEBHOOK_SHARED_SECRET", "")
+    monkeypatch.setattr(app, "ALLOW_INSECURE_LOCAL_WEBHOOKS", True)
+    monkeypatch.setattr(app, "EMAIL_TRANSPORT", "smtp")
+
+    with pytest.raises(RuntimeError, match="Unsupported EMAIL_TRANSPORT"):
+        app.validate_startup_config()
+
+
+def test_startup_requires_resend_configuration(monkeypatch, tmp_path):
+    agency_profile = tmp_path / "agency_profile.json"
+    agency_profile.write_text("{}", encoding="utf-8")
+    owner_config = tmp_path / "owner_configuration.json"
+    owner_config.write_text("{}", encoding="utf-8")
+
+    monkeypatch.setattr(app, "AGENCY_PROFILE_PATH", agency_profile)
+    monkeypatch.setattr(app, "OWNER_CONFIG_PATH", owner_config)
+    monkeypatch.setattr(app, "WEBHOOK_SHARED_SECRET", "")
+    monkeypatch.setattr(app, "ALLOW_INSECURE_LOCAL_WEBHOOKS", True)
+    monkeypatch.setattr(app, "EMAIL_TRANSPORT", "resend")
+    monkeypatch.setattr(app, "RESEND_API_KEY", "")
+    monkeypatch.setattr(app, "RESEND_FROM_EMAIL", "Owner <owner@example.com>")
+    monkeypatch.setattr(app, "RESEND_REPLY_TO_EMAIL", "reply@example.com")
+
+    with pytest.raises(RuntimeError, match="RESEND_API_KEY"):
+        app.validate_startup_config()
