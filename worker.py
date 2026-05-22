@@ -13,7 +13,7 @@ from langgraph.errors import GraphInterrupt
 
 from channels.channel_dispatcher import dispatch_lead_response
 from agents.speed_to_lead_chat import build_speed_to_lead_chat
-from app import (
+from tools.workflow_runner import (
     _latest_agent_run_fields,
     _owner_summary_from_run,
     run_approval_workflow_status,
@@ -661,7 +661,13 @@ def _looks_like_nurture_not_ready(decision: dict[str, Any]) -> bool:
     service_interest = profile.get("service_interest", "")
     wants_automation = any(
         marker in combined
-        for marker in ("ai automation", "automation", "respond", "customer messages")
+        for marker in (
+            "ai automation",
+            "automation",
+            "automated responses",
+            "respond to leads automatically",
+            "customer messages",
+        )
     ) or bool(service_interest)
 
     return has_real_business and (too_early_language or too_early_metrics) and wants_automation

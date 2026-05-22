@@ -7,6 +7,7 @@ import pytest
 from langchain_core.messages import AIMessage
 
 import tools.crm as crm
+import tools.io_helpers as io_helpers
 from tools.crm import save_run_artifacts
 from workflow_nodes import (
     _draft_summary,
@@ -70,6 +71,46 @@ def test_save_run_artifacts_writes_crm_note_in_same_run_folder(monkeypatch, tmp_
     assert Path(paths["crm_note"]).read_text(encoding="utf-8").startswith("# CRM Note")
 
 
+def test_output_run_dir_rejects_path_traversal(monkeypatch, tmp_path):
+    monkeypatch.setattr(io_helpers, "OUTPUT_DIR", tmp_path / "outputs")
+
+    with pytest.raises(ValueError, match="escapes OUTPUT_DIR"):
+        io_helpers.output_run_dir("../../tmp/evil")
+
+
+def test_save_run_artifacts_sanitizes_malicious_lead_id(monkeypatch, tmp_path):
+    monkeypatch.setattr(io_helpers, "OUTPUT_DIR", tmp_path / "outputs")
+    monkeypatch.setattr(crm, "airtable_is_configured", lambda: False)
+
+    raw = save_run_artifacts.invoke(
+        {
+            "lead_id": "../../tmp/evil",
+            "decision_json": json.dumps(
+                {
+                    "lead_id": "../../tmp/evil",
+                    "classification": "needs_clarification",
+                    "fit": "medium",
+                    "urgency": "this_week",
+                    "score": 62,
+                    "recommended_next_action": "ask_missing_info",
+                }
+            ),
+            "draft_subject": "Test subject",
+            "draft_body": "Test body",
+            "evidence_json": json.dumps({"signals": ["test"]}),
+        }
+    )
+
+    result = json.loads(raw)
+    output_root = (tmp_path / "outputs").resolve()
+    run_dir = Path(result["paths"]["decision"]).parent.resolve()
+
+    assert output_root in run_dir.parents
+    assert ".." not in result["run_id"]
+    assert "/" not in result["run_id"]
+    assert "\\" not in result["run_id"]
+
+
 def test_lead_context_removes_internal_airtable_fields_and_truncates_long_message():
     context = _lead_context(
         {
@@ -118,3 +159,11 @@ def test_draft_summary_uses_preview_instead_of_full_body():
 
     assert "body" not in summary
     assert summary["body_preview"].endswith("...[truncated]")
+
+
+def test_worker_imports_workflow_runner_instead_of_app():
+    source = Path("worker.py").read_text(encoding="utf-8")
+
+    assert "from app import" not in source
+    assert "import app" not in source
+    assert "from tools.workflow_runner import" in source

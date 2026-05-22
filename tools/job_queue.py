@@ -281,6 +281,40 @@ def mark_latest_waiting_job_resolved(lead_id: str, status: str) -> dict[str, Any
     return dict(row)
 
 
+def claim_waiting_approval_job(
+    lead_id: str,
+    decision: str,
+) -> dict[str, Any] | None:
+    setup_job_queue()
+    with _connect() as conn:
+        row = conn.execute(
+            """
+            UPDATE lead_jobs
+            SET status = 'approval_processing',
+                payload = jsonb_set(
+                    payload,
+                    '{approval_decision}',
+                    to_jsonb(%s::text),
+                    true
+                ),
+                updated_at = now()
+            WHERE id = (
+                SELECT id
+                FROM lead_jobs
+                WHERE lead_id = %s
+                  AND status = 'waiting_approval'
+                ORDER BY created_at DESC
+                FOR UPDATE SKIP LOCKED
+                LIMIT 1
+            )
+            RETURNING id, lead_id, status, attempts, payload, updated_at;
+            """,
+            (decision, lead_id),
+        ).fetchone()
+
+    return dict(row) if row else None
+
+
 def mark_latest_job_status_by_lead_id(lead_id: str, status: str) -> dict[str, Any]:
     with _connect() as conn:
         row = conn.execute(

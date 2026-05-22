@@ -118,6 +118,26 @@ def test_vendor_pitch_still_closes_as_not_fit():
     assert _stored_conversation_status(decision) == "not_fit_close"
 
 
+def test_bad_fit_generic_respond_language_still_closes(monkeypatch):
+    monkeypatch.setattr(
+        "worker._automation_roi_thresholds",
+        lambda: {"min_monthly_revenue": 1000, "min_monthly_leads": 10},
+    )
+    decision = {
+        "conversation_status": "not_fit_close",
+        "reply_text": "We are not the right fit to respond to this request.",
+        "qualification_summary": "Bad fit with no relevant service need.",
+        "extracted_profile": {
+            "business_type": "unknown",
+            "monthly_revenue": "$200/month",
+            "monthly_inquiry_volume": "2",
+        },
+    }
+
+    assert not _looks_like_nurture_not_ready(decision)
+    assert _stored_conversation_status(decision) == "not_fit_close"
+
+
 def test_message_context_trims_per_message_and_total_context(monkeypatch):
     monkeypatch.setattr("worker.CHANNEL_MESSAGE_MAX_CHARS", 30)
     monkeypatch.setattr("worker.CHANNEL_CONTEXT_MAX_CHARS", 70)

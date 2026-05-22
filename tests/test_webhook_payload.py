@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import pytest
+
+import app
 from app import (
     _is_guarded_path,
     _safe_int,
@@ -21,6 +24,17 @@ def test_normalize_flat_lead_payload_sets_defaults():
     assert lead["name"] == "Maya Chen"
     assert lead["source"] == "website_form"
     assert lead["status"] == "new"
+
+
+def test_normalize_flat_lead_payload_makes_lead_id_path_safe():
+    lead = normalize_lead_payload(
+        {
+            "lead_id": "../../tmp/evil\\lead",
+            "name": "Maya Chen",
+        }
+    )
+
+    assert lead["lead_id"] == "tmp_evil_lead"
 
 
 def test_normalize_tally_style_payload_uses_field_keys():
@@ -107,3 +121,32 @@ def test_lead_fingerprint_is_stable_for_whitespace_and_case():
     )
 
     assert first == second
+
+
+def test_startup_requires_webhook_secret_unless_local_flag(monkeypatch, tmp_path):
+    agency_profile = tmp_path / "agency_profile.json"
+    agency_profile.write_text("{}", encoding="utf-8")
+    owner_config = tmp_path / "owner_configuration.json"
+    owner_config.write_text("{}", encoding="utf-8")
+
+    monkeypatch.setattr(app, "AGENCY_PROFILE_PATH", agency_profile)
+    monkeypatch.setattr(app, "OWNER_CONFIG_PATH", owner_config)
+    monkeypatch.setattr(app, "WEBHOOK_SHARED_SECRET", "")
+    monkeypatch.setattr(app, "ALLOW_INSECURE_LOCAL_WEBHOOKS", False)
+
+    with pytest.raises(RuntimeError, match="WEBHOOK_SHARED_SECRET is required"):
+        app.validate_startup_config()
+
+
+def test_startup_allows_missing_webhook_secret_for_explicit_local_dev(monkeypatch, tmp_path):
+    agency_profile = tmp_path / "agency_profile.json"
+    agency_profile.write_text("{}", encoding="utf-8")
+    owner_config = tmp_path / "owner_configuration.json"
+    owner_config.write_text("{}", encoding="utf-8")
+
+    monkeypatch.setattr(app, "AGENCY_PROFILE_PATH", agency_profile)
+    monkeypatch.setattr(app, "OWNER_CONFIG_PATH", owner_config)
+    monkeypatch.setattr(app, "WEBHOOK_SHARED_SECRET", "")
+    monkeypatch.setattr(app, "ALLOW_INSECURE_LOCAL_WEBHOOKS", True)
+
+    app.validate_startup_config()

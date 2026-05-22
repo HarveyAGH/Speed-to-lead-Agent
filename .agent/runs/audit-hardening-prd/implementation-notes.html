@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Audit hardening PRD - Implementation Notes</title>
+  <style>
+    body {
+      color: #202124;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.55;
+      margin: 0 auto;
+      max-width: 920px;
+      padding: 40px 24px;
+    }
+    h1, h2 { line-height: 1.2; }
+    code {
+      background: #f1f3f4;
+      border-radius: 4px;
+      padding: 2px 5px;
+    }
+    .meta {
+      background: #f8f9fa;
+      border: 1px solid #dadce0;
+      border-radius: 8px;
+      padding: 16px;
+    }
+    .timeline {
+      background: #f8f9fa;
+      border: 1px solid #dadce0;
+      border-radius: 8px;
+      max-height: 360px;
+      overflow: auto;
+      padding: 8px;
+    }
+    .timeline-note {
+      color: #5f6368;
+      margin-bottom: 10px;
+    }
+    .event {
+      background: #fff;
+      border: 1px solid #e8eaed;
+      border-radius: 8px;
+      margin: 8px 0;
+      padding: 12px 14px;
+    }
+    .event-head {
+      align-items: center;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 6px;
+    }
+    .event-summary {
+      margin: 0;
+    }
+    .event time {
+      color: #5f6368;
+      font-size: 13px;
+    }
+    .badge, .phase, .actor {
+      border-radius: 999px;
+      display: inline-block;
+      font-size: 12px;
+      font-weight: 700;
+      line-height: 1;
+      padding: 5px 8px;
+      text-transform: uppercase;
+    }
+    .badge { background: #e8f0fe; color: #174ea6; }
+    .status-done, .status-validated { background: #e6f4ea; color: #137333; }
+    .status-blocked, .status-failed { background: #fce8e6; color: #c5221f; }
+    .status-decision { background: #fef7e0; color: #b06000; }
+    .phase, .actor {
+      background: #f1f3f4;
+      color: #3c4043;
+      font-weight: 600;
+    }
+    li { margin: 6px 0; }
+  </style>
+</head>
+<body>
+  <h1>Audit hardening PRD</h1>
+  <div class="meta">
+    <p><strong>Goal ID:</strong> <code>audit-hardening-prd</code></p>
+    <p><strong>Started:</strong> 2026-05-22T02:20:14Z</p>
+    <p><strong>Parent goal:</strong> none</p>
+    <p><strong>Mode:</strong> full</p>
+    <p><strong>Objective:</strong> Implement the final audit hardening PRD in order, keep existing Tally, Telegram, WhatsApp, queue, checkpointer, Airtable, LangSmith, and worker flows working, pass the full pytest suite, commit, and push.</p>
+  </div>
+
+  <h2>Resume Here</h2>
+  <ul>
+    <li><strong>Status:</strong> [done] Required audit hardening fixes implemented and full test suite passes.</li>
+    <li><strong>Current phase:</strong> Commit and push.</li>
+    <li><strong>Completed work:</strong> Added atomic Postgres approval claim helper, switched approval resume paths to claim before graph resume, covered claimed/already-claimed callback behavior, sanitized lead IDs for path use, guarded output run directories against escaping <code>OUTPUT_DIR</code>, required webhook secrets unless explicit local-dev bypass is enabled, extracted workflow runner helpers out of <code>app.py</code>, removed <code>worker.py</code> importing <code>app.py</code>, and narrowed nurture detection away from generic <code>respond</code>.</li>
+    <li><strong>Blockers:</strong> None recorded.</li>
+    <li><strong>Next action:</strong> Stage PRD-scoped files, commit, and push <code>main</code>.</li>
+    <li><strong>Last validation:</strong> <code>.venv/bin/python -m pytest</code> -> 85 passed.</li>
+    <li><strong>Protected paths:</strong> Existing unrelated prompt rewrite in <code>prompts/lead_qualifier.md</code> remains outside the PRD commit scope.</li>
+  </ul>
+
+  <h2>Progress Timeline</h2>
+  <p class="timeline-note">Progress is rendered directly in this file from the inline <code>progressEvents</code> array below. Append a new event to that array whenever execution reality changes meaningfully.</p>
+  <div id="progress-timeline" class="timeline"></div>
+
+  <h2>Decisions Outside The Spec</h2>
+  <ul>
+    <li>Skipped optional cleanup/refactor items because the required audit fixes are complete and broad optional refactors would expand the commit beyond the hardening scope.</li>
+    <li>Kept the existing dispatch-failure status path (<code>approved_dispatch_failed</code>) when approval succeeds but channel send fails, instead of collapsing every approved path to <code>approved_sent</code>.</li>
+  </ul>
+
+  <h2>Changes And Tradeoffs</h2>
+  <ul>
+    <li>Approval callbacks now use Postgres <code>lead_jobs</code> as the concurrency arbiter before graph resume. Airtable remains writeback/status storage.</li>
+    <li>Path safety is enforced in both form lead ID normalization and <code>output_run_dir()</code> containment checks.</li>
+    <li><code>tools/workflow_runner.py</code> now owns approval workflow execution and shared latest-run summary helpers.</li>
+  </ul>
+
+  <h2>Validation</h2>
+  <ul>
+    <li>[done] C-01 callback regression: <code>.venv/bin/python -m pytest tests/test_telegram_webhook.py -q</code> -> 13 passed.</li>
+    <li>[done] H-01 path safety: <code>.venv/bin/python -m pytest tests/test_workflow_hardening.py tests/test_webhook_payload.py -q</code> -> 15 passed.</li>
+    <li>[done] Combined affected suites: <code>.venv/bin/python -m pytest tests/test_telegram_webhook.py tests/test_workflow_hardening.py tests/test_webhook_payload.py -q</code> -> 31 passed.</li>
+    <li>[done] M-02 channel status regression: <code>.venv/bin/python -m pytest tests/test_channel_conversation_stop.py -q</code> -> 11 passed.</li>
+    <li>[done] Full suite: <code>.venv/bin/python -m pytest</code> -> 85 passed.</li>
+  </ul>
+
+  <h2>Evidence</h2>
+  <ul>
+    <li>Evidence links are pending. Put large logs, screenshots, or command output in <code>evidence/</code> and link them here.</li>
+  </ul>
+
+  <h2>Next Goal Candidates</h2>
+  <ul>
+    <li>Empty at start.</li>
+  </ul>
+  <script>
+    const progressEvents = [
+      {
+        ts: "2026-05-22T02:20:14Z",
+        status: "created",
+        phase: "start",
+        actor: "agent",
+        summary: "Goal ledger created."
+      },
+      {
+        ts: "2026-05-22T02:23:47Z",
+        status: "done",
+        phase: "C-01",
+        actor: "agent",
+        summary: "Atomic approval claim added before graph resume; Telegram callback tests cover claimed and already-claimed paths."
+      },
+      {
+        ts: "2026-05-22T02:26:17Z",
+        status: "done",
+        phase: "H-01",
+        actor: "agent",
+        summary: "Lead IDs are path-safe and output_run_dir rejects traversal outside OUTPUT_DIR; focused hardening tests pass."
+      },
+      {
+        ts: "2026-05-22T02:32:05Z",
+        status: "validated",
+        phase: "required-fixes",
+        actor: "agent",
+        summary: "M-03, H-03, and M-02 are implemented; full pytest suite reports 85 passed."
+      }
+    ];
+
+    function escapeHtml(value) {
+      return String(value || "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    function renderEvent(event) {
+      const status = escapeHtml(event.status || "event");
+      const phase = escapeHtml(event.phase || "general");
+      const actor = escapeHtml(event.actor || "agent");
+      const timestamp = escapeHtml(event.ts || "");
+      const summary = escapeHtml(event.summary || "");
+      return `
+        <article class="event">
+          <div class="event-head">
+            <span class="badge status-${status}">${status}</span>
+            <span class="phase">${phase}</span>
+            <span class="actor">${actor}</span>
+            <time datetime="${timestamp}">${timestamp}</time>
+          </div>
+          <p class="event-summary">${summary}</p>
+        </article>
+      `;
+    }
+
+    function renderProgressTimeline() {
+      const target = document.getElementById("progress-timeline");
+      const events = Array.isArray(progressEvents) ? progressEvents : [];
+      if (events.length === 0) {
+        target.innerHTML = "<p>No progress events recorded yet.</p>";
+        return;
+      }
+      target.innerHTML = events.map(renderEvent).join("");
+    }
+    renderProgressTimeline();
+  </script>
+</body>
+</html>

@@ -9,9 +9,9 @@ from uuid import uuid4
 
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
-from langgraph.errors import GraphInterrupt
 
 from config import (
+    ALLOW_INSECURE_LOCAL_WEBHOOKS,
     MAX_WEBHOOK_BODY_BYTES,
     RATE_LIMIT_REQUESTS,
     RATE_LIMIT_WINDOW_SECONDS,
@@ -21,25 +21,31 @@ from config import (
     WEBHOOK_SHARED_SECRET,
     OWNER_CONFIG_PATH,
 )
-from langgraph.types import Command
 from channels.channel_dispatcher import dispatch_lead_response
 from channels.whatsapp.adapter import register_whatsapp
 from tools.airtable_client import (
     airtable_is_configured,
-    find_latest_agent_run_by_lead_id,
     update_lead_fields,
     update_latest_agent_run_status,
 )
 from tools.channel_conversations import mark_conversation_owner_action
 from tools.lead_ingestion import build_lead_fingerprint, ingest_lead
 from tools.job_queue import (
+    claim_waiting_approval_job,
     get_job_payload_by_lead_id,
     list_recent_jobs,
+    mark_lead_job_completed,
     mark_latest_job_status_by_lead_id,
-    mark_latest_waiting_job_resolved,
     queue_is_configured,
 )
 from tools.owner_config import get_owner_config
+from tools.io_helpers import safe_path_component
+from tools.workflow_runner import (
+    _latest_agent_run_fields,
+    resume_lead_send,
+    run_approval_workflow,
+    run_approval_workflow_status,
+)
 
 from tools.telegram import (
     answer_callback_query,
@@ -69,6 +75,11 @@ def validate_startup_config() -> None:
         logger.warning(
             "OWNER_CONFIG_PATH not found: %s — owner defaults may be incomplete",
             OWNER_CONFIG_PATH,
+        )
+    if not WEBHOOK_SHARED_SECRET and not ALLOW_INSECURE_LOCAL_WEBHOOKS:
+        raise RuntimeError(
+            "WEBHOOK_SHARED_SECRET is required. Set "
+            "ALLOW_INSECURE_LOCAL_WEBHOOKS=true only for local development."
         )
 
 
@@ -153,7 +164,7 @@ def approve_lead_send(
     x_webhook_secret: str | None = Header(default=None),
 ) -> dict[str, Any]:
     _require_management_secret(x_webhook_secret)
-    return resume_lead_send(lead_id, "approve")
+    return _resume_claimed_management_approval(lead_id, "approve")
 
 
 @app.post("/approval/{lead_id}/reject")
@@ -162,7 +173,7 @@ def reject_lead_send(
     x_webhook_secret: str | None = Header(default=None),
 ) -> dict[str, Any]:
     _require_management_secret(x_webhook_secret)
-    return resume_lead_send(lead_id, "reject")
+    return _resume_claimed_management_approval(lead_id, "reject")
 
 
 @app.post("/telegram/webhook")
@@ -255,6 +266,39 @@ def _handle_owner_callback(callback: dict[str, Any]) -> dict[str, Any]:
     return _process_form_approval_callback(callback, acknowledge=True)
 
 
+def _resume_claimed_management_approval(lead_id: str, decision: str) -> dict[str, Any]:
+    claimed_job = claim_waiting_approval_job(lead_id, decision)
+    if not claimed_job:
+        return {
+            "ok": True,
+            "lead_id": lead_id,
+            "decision": decision,
+            "status": "duplicate_callback_ignored",
+            "reason": "approval_job_already_claimed_or_processed",
+        }
+
+    result = resume_lead_send(lead_id, decision)
+    approval_status = "approved_sent" if decision == "approve" else "rejected_by_owner"
+    airtable_status_update = update_latest_agent_run_status(
+        lead_id=lead_id,
+        approval_status=approval_status,
+    )
+    queue_status_update = mark_lead_job_completed(
+        int(claimed_job["id"]),
+        status=approval_status,
+        first_response=approval_status == "approved_sent",
+    )
+
+    return {
+        "ok": True,
+        "lead_id": lead_id,
+        "decision": decision,
+        "result": result,
+        "airtable_status_update": airtable_status_update,
+        "queue_status_update": queue_status_update,
+    }
+
+
 def _process_form_approval_callback(
     callback: dict[str, Any],
     *,
@@ -279,10 +323,9 @@ def _process_form_approval_callback(
             answer_callback_query(callback_id, "Unknown decision.")
         return {"ok": False, "error": "unknown_decision"}
 
-    latest_run = _latest_agent_run_fields(lead_id)
-    current_status = str(latest_run.get("approval_status") or "")
-    if current_status in {"approved_sent", "rejected_by_owner"}:
-        decision_label = "already approved ✅" if current_status == "approved_sent" else "already rejected ❌"
+    claimed_job = claim_waiting_approval_job(lead_id, decision)
+    if not claimed_job:
+        decision_label = "already claimed or processed"
         if acknowledge:
             answer_callback_query(callback_id, f"Lead was {decision_label}.")
         edit_result = None
@@ -292,8 +335,8 @@ def _process_form_approval_callback(
                 chat_id=chat_id,
                 message_id=message_id,
                 text=(
-                    f"Lead {lead_id} {decision_label}\n\n"
-                    "This approval decision had already been processed."
+                    f"Lead {lead_id}: approval already claimed or processed.\n\n"
+                    "No duplicate workflow resume was started."
                 ),
             )
         return {
@@ -301,9 +344,11 @@ def _process_form_approval_callback(
             "lead_id": lead_id,
             "decision": decision,
             "status": "duplicate_callback_ignored",
+            "reason": "approval_job_already_claimed_or_processed",
             "telegram_edit": edit_result,
         }
 
+    latest_run = _latest_agent_run_fields(lead_id)
     if acknowledge:
         answer_callback_query(callback_id, f"{decision.title()} received. Processing...")
     if acknowledge and chat_id and message_id:
@@ -330,9 +375,10 @@ def _process_form_approval_callback(
         lead_id=lead_id,
         approval_status=approval_status,
     )
-    queue_status_update = mark_latest_waiting_job_resolved(
-        lead_id=lead_id,
+    queue_status_update = mark_lead_job_completed(
+        int(claimed_job["id"]),
         status=approval_status,
+        first_response=approval_status == "approved_sent",
     )
 
     if dispatch_failed:
@@ -386,11 +432,6 @@ def _queue_form_approval_callback(
     if decision not in {"approve", "reject"}:
         answer_callback_query(callback_id, "Unknown decision.")
         return {"ok": False, "error": "unknown_decision"}
-
-    latest_run = _latest_agent_run_fields(lead_id)
-    current_status = str(latest_run.get("approval_status") or "")
-    if current_status in {"approved_sent", "rejected_by_owner"}:
-        return _process_form_approval_callback(callback, acknowledge=True)
 
     answer_callback_query(callback_id, f"{decision.title()} received. Processing...")
     if chat_id and message_id:
@@ -520,7 +561,11 @@ def normalize_lead_payload(payload: dict[str, Any]) -> dict[str, str]:
 
     lead_id = str(fields.get("lead_id") or f"lead_{uuid4().hex[:8]}")
     return {
-        "lead_id": _sanitize_lead_value(lead_id, limit=120),
+        "lead_id": safe_path_component(
+            _sanitize_lead_value(lead_id, limit=120),
+            fallback="lead",
+            limit=120,
+        ),
         "received_at": _sanitize_lead_value(fields.get("received_at"), limit=120),
         "name": _sanitize_lead_value(fields.get("name"), limit=200),
         "email": _sanitize_lead_value(fields.get("email"), limit=254),
@@ -635,17 +680,6 @@ def _safe_int(value: str) -> int:
         return 0
 
 
-def _latest_agent_run_fields(lead_id: str) -> dict[str, Any]:
-    try:
-        record = find_latest_agent_run_by_lead_id(lead_id)
-    except Exception:
-        return {}
-
-    if not record:
-        return {}
-    return dict(record.get("fields", {}))
-
-
 def _dispatch_approved_response(
     *,
     lead_id: str,
@@ -663,118 +697,3 @@ def _dispatch_approved_response(
         subject=str(latest_run.get("draft_subject") or ""),
         body=str(latest_run.get("draft_body") or ""),
     )
-
-
-def _owner_summary_from_run(run_fields: dict[str, Any]) -> str:
-    if not run_fields:
-        return (
-            "The agent processed this lead and paused before customer-facing send. "
-            "Review the draft before approving or rejecting."
-        )
-
-    classification = run_fields.get("classification") or "unknown"
-    fit = run_fields.get("fit") or "unknown"
-    urgency = run_fields.get("urgency") or "unknown"
-    score = run_fields.get("score") or "not scored"
-    action = run_fields.get("recommended_next_action") or "review"
-
-    return (
-        f"The agent classified this lead as {classification} with {fit} fit, "
-        f"{urgency} urgency, and score {score}. Recommended action: {action}. "
-        "Review the draft before approving the customer-facing follow-up."
-    )
-
-
-def _graph_interrupt_summary(exc: GraphInterrupt) -> str:
-    return (
-        "The workflow paused at a human approval boundary. "
-        f"Interrupt detail: {exc}"
-    )
-
-
-def run_approval_workflow(lead_id: str) -> str:
-    return run_approval_workflow_status(lead_id)["summary"]
-
-
-def run_approval_workflow_status(lead_id: str) -> dict[str, Any]:
-    from graph import graph
-
-    config = build_trace_config(
-        lead_id=lead_id,
-        phase="initial",
-        source="tally",
-        tags=["webhook", "tally", "lead_intake", "pipeline"],
-    )
-    result = graph.invoke(
-        {"lead_id": lead_id},
-        config=config,
-    )
-
-    if "__interrupt__" in result:
-        return {
-            "status": "pending_approval",
-            "summary": (
-                "The workflow paused at a human approval boundary. "
-                f"Interrupt detail: {result['__interrupt__']}"
-            ),
-            "interrupt": result["__interrupt__"],
-        }
-
-    return {
-        "status": "completed",
-        "summary": result.get("summary", "Workflow Completed."),
-        "interrupt": None,
-        "state": result,
-    }
-
-
-def resume_lead_send(lead_id: str, decision: str) -> dict[str, Any]:
-    from graph import graph
-
-    config = build_trace_config(
-        lead_id=lead_id,
-        phase=f"approval.{decision}",
-        source="telegram",
-        tags=["approval", "telegram", "lead_intake", "pipeline"],
-        metadata={"decision": decision},
-    )
-
-    result = graph.invoke(Command(resume=decision), config=config)
-
-    return {
-        "status": decision,
-        "lead_id": lead_id,
-        "result": result.get("summary", "Workflow resumed."),
-        "state": result,
-    }
-
-
-def build_trace_config(
-    *,
-    lead_id: str,
-    phase: str,
-    source: str,
-    tags: list[str],
-    metadata: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    thread_id = f"lead-{lead_id}"
-    base_metadata = {
-        "lead_id": lead_id,
-        "thread_id": thread_id,
-        "source": source,
-        "workflow": "speed_to_lead",
-        "workflow_phase": phase,
-        "workflow_architecture": "explicit_stategraph",
-        "checkpoint_backend": "postgres",
-    }
-    if metadata:
-        base_metadata.update(metadata)
-
-    return {
-        "configurable": {
-            "thread_id": thread_id,
-        },
-        "run_name": f"speed_to_lead.{phase}.{lead_id}",
-        "tags": tags,
-        "metadata": base_metadata,
-    }
