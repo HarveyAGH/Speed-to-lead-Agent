@@ -7,7 +7,7 @@ from typing import Any
 import psycopg
 from psycopg.rows import dict_row
 
-from config import POSTGRES_DB_URI
+from config import POSTGRES_CONNECT_TIMEOUT_SECONDS, POSTGRES_DB_URI
 
 
 _setup_lock = Lock()
@@ -214,4 +214,9 @@ def _status_for_owner_action(action: str) -> str:
 def _connect():
     if not POSTGRES_DB_URI:
         raise RuntimeError("POSTGRES_DB_URI is required for channel conversations.")
-    return psycopg.connect(POSTGRES_DB_URI, autocommit=True, row_factory=dict_row)
+    return psycopg.connect(
+        POSTGRES_DB_URI,
+        autocommit=True,
+        row_factory=dict_row,
+        connect_timeout=POSTGRES_CONNECT_TIMEOUT_SECONDS,
+    )

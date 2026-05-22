@@ -155,15 +155,13 @@ def save_artifacts_node(state: LeadWorkflowState) -> dict[str, Any]:
         "can_respond_now": missing_info.get("can_respond_now"),
     }
 
-    raw_artifacts = save_run_artifacts.invoke(
-        {
-            "lead_id": state["lead_id"],
-            "decision_json": json.dumps(decision),
-            "draft_subject": draft.get("subject", ""),
-            "draft_body": draft.get("body", ""),
-            "evidence_json": json.dumps(evidence),
-            "crm_note_json": json.dumps(crm_note),
-        }
+    raw_artifacts = save_run_artifacts(
+        lead_id=state["lead_id"],
+        decision_json=json.dumps(decision),
+        draft_subject=draft.get("subject", ""),
+        draft_body=draft.get("body", ""),
+        evidence_json=json.dumps(evidence),
+        crm_note_json=json.dumps(crm_note),
     )
 
     artifacts = json.loads(raw_artifacts)

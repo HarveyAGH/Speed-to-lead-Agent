@@ -35,15 +35,15 @@ from tools.job_queue import (
     get_job_payload_by_lead_id,
     list_recent_jobs,
     mark_lead_job_completed,
+    mark_lead_job_failed,
     mark_latest_job_status_by_lead_id,
     queue_is_configured,
 )
 from tools.owner_config import get_owner_config
 from tools.io_helpers import safe_path_component
 from tools.workflow_runner import (
-    _latest_agent_run_fields,
+    latest_agent_run_fields,
     resume_lead_send,
-    run_approval_workflow,
     run_approval_workflow_status,
 )
 
@@ -277,7 +277,27 @@ def _resume_claimed_management_approval(lead_id: str, decision: str) -> dict[str
             "reason": "approval_job_already_claimed_or_processed",
         }
 
-    result = resume_lead_send(lead_id, decision)
+    try:
+        result = resume_lead_send(lead_id, decision)
+    except Exception as exc:
+        logger.error(
+            "management_approval_resume_failed lead_id=%s job_id=%s decision=%s error=%s",
+            lead_id,
+            claimed_job["id"],
+            decision,
+            str(exc),
+            exc_info=True,
+        )
+        queue_failure = mark_lead_job_failed(int(claimed_job["id"]), str(exc))
+        return {
+            "ok": False,
+            "lead_id": lead_id,
+            "decision": decision,
+            "status": "approval_resume_failed",
+            "error": str(exc),
+            "queue_status_update": queue_failure,
+        }
+
     approval_status = "approved_sent" if decision == "approve" else "rejected_by_owner"
     airtable_status_update = update_latest_agent_run_status(
         lead_id=lead_id,
@@ -348,24 +368,52 @@ def _process_form_approval_callback(
             "telegram_edit": edit_result,
         }
 
-    latest_run = _latest_agent_run_fields(lead_id)
+    latest_run = latest_agent_run_fields(lead_id)
     if acknowledge:
         answer_callback_query(callback_id, f"{decision.title()} received. Processing...")
     if acknowledge and chat_id and message_id:
         remove_approval_buttons(chat_id=chat_id, message_id=message_id)
 
-    result = resume_lead_send(lead_id, decision)
-    channel_dispatch_result = None
-    if decision == "approve":
-        channel_dispatch_result = _dispatch_approved_response(
-            lead_id=lead_id,
-            latest_run=latest_run,
+    try:
+        result = resume_lead_send(lead_id, decision)
+        channel_dispatch_result = None
+        if decision == "approve":
+            channel_dispatch_result = _dispatch_approved_response(
+                lead_id=lead_id,
+                latest_run=latest_run,
+            )
+        dispatch_failed = (
+            decision == "approve"
+            and channel_dispatch_result is not None
+            and channel_dispatch_result.get("ok") is False
         )
-    dispatch_failed = (
-        decision == "approve"
-        and channel_dispatch_result is not None
-        and channel_dispatch_result.get("ok") is False
-    )
+    except Exception as exc:
+        logger.error(
+            "approval_resume_failed lead_id=%s job_id=%s decision=%s error=%s",
+            lead_id,
+            claimed_job["id"],
+            decision,
+            str(exc),
+            exc_info=True,
+        )
+        queue_failure = mark_lead_job_failed(int(claimed_job["id"]), str(exc))
+        if chat_id and message_id:
+            edit_approval_message(
+                chat_id=chat_id,
+                message_id=message_id,
+                text=(
+                    f"Lead {lead_id}: approval processing failed.\n\n"
+                    "The queue job was released for retry."
+                ),
+            )
+        return {
+            "ok": False,
+            "lead_id": lead_id,
+            "decision": decision,
+            "status": "approval_resume_failed",
+            "error": str(exc),
+            "queue_status_update": queue_failure,
+        }
 
     if dispatch_failed:
         approval_status = "approved_dispatch_failed"

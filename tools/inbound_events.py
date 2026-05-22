@@ -5,7 +5,7 @@ from threading import Lock
 import psycopg
 from psycopg.rows import dict_row
 
-from config import POSTGRES_DB_URI
+from config import POSTGRES_CONNECT_TIMEOUT_SECONDS, POSTGRES_DB_URI
 
 
 _setup_lock = Lock()
@@ -61,4 +61,9 @@ def record_inbound_event(source_channel: str, event_id: str) -> bool:
 def _connect():
     if not POSTGRES_DB_URI:
         raise RuntimeError("POSTGRES_DB_URI is required for inbound event tracking.")
-    return psycopg.connect(POSTGRES_DB_URI, autocommit=True, row_factory=dict_row)
+    return psycopg.connect(
+        POSTGRES_DB_URI,
+        autocommit=True,
+        row_factory=dict_row,
+        connect_timeout=POSTGRES_CONNECT_TIMEOUT_SECONDS,
+    )

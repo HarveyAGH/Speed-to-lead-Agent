@@ -14,8 +14,8 @@ from langgraph.errors import GraphInterrupt
 from channels.channel_dispatcher import dispatch_lead_response
 from agents.speed_to_lead_chat import build_speed_to_lead_chat
 from tools.workflow_runner import (
-    _latest_agent_run_fields,
-    _owner_summary_from_run,
+    latest_agent_run_fields,
+    owner_summary_from_run,
     run_approval_workflow_status,
 )
 from config import (
@@ -90,7 +90,7 @@ def process_one_job() -> dict[str, Any] | None:
                 f"Interrupt detail: {exc}"
             )
 
-        latest_run = _latest_agent_run_fields(lead_id)
+        latest_run = latest_agent_run_fields(lead_id)
         decision = workflow_state.get("decision") or _decision_from_latest_run(latest_run)
         send_policy = str(
             workflow_state.get("send_policy")
@@ -105,7 +105,7 @@ def process_one_job() -> dict[str, Any] | None:
                 company=str(payload.get("company") or ""),
                 recommendation=latest_run.get("recommended_next_action")
                 or "Review drafted follow-up",
-                summary=_owner_summary_from_run(latest_run),
+                summary=owner_summary_from_run(latest_run),
                 classification=latest_run.get("classification", ""),
                 fit=latest_run.get("fit", ""),
                 urgency=latest_run.get("urgency", ""),
@@ -205,7 +205,6 @@ def process_channel_message_job(job: dict[str, Any]) -> dict[str, Any]:
     payload = dict(job.get("payload") or {})
     source_channel = str(payload.get("source_channel") or "")
     channel_user_id = str(payload.get("channel_user_id") or "")
-    sender_name = str(payload.get("sender_name") or "")
 
     try:
         context = get_conversation_context(
@@ -218,229 +217,44 @@ def process_channel_message_job(job: dict[str, Any]) -> dict[str, Any]:
             )
         owner_already_escalated = bool(context.get("last_owner_escalated_at"))
         customer_text = str(payload.get("text") or "")
+        status = str(context.get("status") or "")
 
-        if _conversation_is_handoff_pending(str(context.get("status") or "")):
-            reply_text = _handoff_pending_reply()
-            append_channel_message(
-                conversation_id=int(context["id"]),
-                role="assistant",
-                content=reply_text,
-            )
-            dispatch_result = dispatch_lead_response(
-                source_channel=source_channel,
-                channel_user_id=channel_user_id,
-                subject="",
-                body=reply_text,
-            )
-            if dispatch_result.get("ok") is False:
-                raise RuntimeError(f"Channel holding reply dispatch failed: {dispatch_result}")
-
-            mark_lead_job_completed(
-                job_id,
-                "handoff_pending_replied",
-                first_response=True,
-            )
-            return {
-                "job_id": job_id,
-                "lead_id": lead_id,
-                "job_type": "channel_message",
-                "status": "handoff_pending_replied",
-                "conversation_status": context.get("status"),
-                "source_channel": source_channel,
-                "channel_dispatch": dispatch_result,
-                "owner_notification": None,
-                "decision": {
-                    "reason": (
-                        "Lead is already in owner handoff state; "
-                        "no LLM call made."
-                    ),
-                },
-            }
-
-        if _conversation_is_terminal(str(context.get("status") or "")):
-            mark_lead_job_completed(
-                job_id,
-                "conversation_already_closed",
-                first_response=False,
-            )
-            return {
-                "job_id": job_id,
-                "lead_id": lead_id,
-                "job_type": "channel_message",
-                "status": "conversation_already_closed",
-                "conversation_status": context.get("status"),
-                "source_channel": source_channel,
-                "channel_dispatch": None,
-                "owner_notification": None,
-                "decision": {
-                    "reason": "Conversation is already terminal; no LLM call made.",
-                },
-            }
-
-        if _customer_is_closing_conversation(customer_text):
-            final_reply = _closing_reply(owner_already_escalated=owner_already_escalated)
-            append_channel_message(
-                conversation_id=int(context["id"]),
-                role="assistant",
-                content=final_reply,
-            )
-            dispatch_result = dispatch_lead_response(
-                source_channel=source_channel,
-                channel_user_id=channel_user_id,
-                subject="",
-                body=final_reply,
-            )
-            if dispatch_result.get("ok") is False:
-                raise RuntimeError(f"Channel closing reply dispatch failed: {dispatch_result}")
-
-            updated_conversation = update_conversation_state(
-                conversation_id=int(context["id"]),
-                extracted_profile=dict(context.get("extracted_profile") or {}),
-                status="customer_closed",
-                owner_escalated=False,
-            )
-            mark_lead_job_completed(
-                job_id,
-                "customer_closed",
-                first_response=True,
-            )
-            return {
-                "job_id": job_id,
-                "lead_id": lead_id,
-                "job_type": "channel_message",
-                "status": "customer_closed",
-                "conversation_status": updated_conversation.get("status"),
-                "source_channel": source_channel,
-                "channel_dispatch": dispatch_result,
-                "owner_notification": None,
-                "decision": {
-                    "reason": "Customer sent a clear closing message; no LLM call made.",
-                    "owner_already_escalated": owner_already_escalated,
-                },
-            }
-
-        agent_context = {
-            "lead_id": lead_id,
-            "source_channel": source_channel,
-            "channel_user_id": channel_user_id,
-            "sender_name": sender_name,
-            "conversation_status": context.get("status"),
-            "owner_already_escalated": owner_already_escalated,
-            "last_owner_escalated_at": str(context.get("last_owner_escalated_at") or ""),
-            "existing_extracted_profile": _compact_profile(
-                context.get("extracted_profile") or {}
-            ),
-            "recent_messages": _message_context(context.get("messages", [])),
-            "agency_profile": json.loads(get_agency_profile.invoke({})),
-            "owner_config": get_owner_config(),
-        }
-        decision_model = _channel_chat_agent().invoke(
-            {"input": json.dumps(agent_context, ensure_ascii=False)}
-        )
-        decision = decision_model.model_dump()
-        raw_conversation_status = str(
-            decision.get("conversation_status") or "continue_conversation"
-        )
-        stored_conversation_status = _stored_conversation_status(decision)
-        reply_text = _reply_text_for_decision(decision)
-
-        append_channel_message(
-            conversation_id=int(context["id"]),
-            role="assistant",
-            content=reply_text,
-        )
-
-        dispatch_result = dispatch_lead_response(
-            source_channel=source_channel,
-            channel_user_id=channel_user_id,
-            subject="",
-            body=reply_text,
-        )
-        if dispatch_result.get("ok") is False:
-            raise RuntimeError(f"Channel reply dispatch failed: {dispatch_result}")
-
-        owner_escalation_required = bool(decision.get("owner_escalation_required"))
-        should_notify_owner = _should_notify_owner(
-            owner_escalation_required=owner_escalation_required,
-            owner_already_escalated=owner_already_escalated,
-        )
-        updated_conversation = update_conversation_state(
-            conversation_id=int(context["id"]),
-            extracted_profile=dict(decision.get("extracted_profile") or {}),
-            status=stored_conversation_status,
-            owner_escalated=should_notify_owner,
-        )
-
-        crm_writeback = write_channel_lead_snapshot(
-            lead_id=lead_id,
-            source_channel=source_channel,
-            channel_user_id=channel_user_id,
-            sender_name=sender_name,
-            extracted_profile=dict(decision.get("extracted_profile") or {}),
-            latest_customer_message=customer_text,
-            owner_summary=str(decision.get("owner_summary") or ""),
-            qualification_summary=str(decision.get("qualification_summary") or ""),
-            status=_airtable_status_for_channel(
-                raw_conversation_status=raw_conversation_status,
-                stored_conversation_status=stored_conversation_status,
-            ),
-        )
-
-        owner_notification = None
-        if should_notify_owner:
-            owner_notification = send_owner_channel_escalation(
+        if _conversation_is_handoff_pending(status):
+            return _handle_handoff_pending_channel_job(
+                job_id=job_id,
                 lead_id=lead_id,
                 source_channel=source_channel,
-                sender_name=sender_name,
                 channel_user_id=channel_user_id,
-                owner_summary=str(decision.get("owner_summary") or ""),
-                qualification_summary=str(decision.get("qualification_summary") or ""),
-                fit=str(decision.get("fit") or ""),
-                urgency=str(decision.get("urgency") or ""),
-                score=decision.get("score", ""),
-                extracted_profile=dict(decision.get("extracted_profile") or {}),
-                transcript=_message_context(context.get("messages", []))
-                + [{"role": "assistant", "content": _trim_text(reply_text, CHANNEL_MESSAGE_MAX_CHARS)}],
+                context=context,
             )
-            if not _notification_delivered(owner_notification):
-                raise RuntimeError(
-                    "Owner escalation required, but Telegram notification failed: "
-                    f"{owner_notification}"
-                )
 
-        completion_status = _channel_completion_status(
-            decision,
-            owner_escalation_required=owner_escalation_required,
+        if _conversation_is_terminal(status):
+            return _handle_terminal_channel_job(
+                job_id=job_id,
+                lead_id=lead_id,
+                source_channel=source_channel,
+                context=context,
+            )
+
+        if _customer_is_closing_conversation(customer_text):
+            return _handle_customer_closed_channel_job(
+                job_id=job_id,
+                lead_id=lead_id,
+                source_channel=source_channel,
+                channel_user_id=channel_user_id,
+                context=context,
+                owner_already_escalated=owner_already_escalated,
+            )
+
+        return _handle_active_channel_job(
+            job_id=job_id,
+            lead_id=lead_id,
+            payload=payload,
+            source_channel=source_channel,
+            channel_user_id=channel_user_id,
+            context=context,
             owner_already_escalated=owner_already_escalated,
-            owner_notification_sent=should_notify_owner,
         )
-        mark_lead_job_completed(
-            job_id,
-            completion_status,
-            first_response=True,
-        )
-
-        return {
-            "job_id": job_id,
-            "lead_id": lead_id,
-            "job_type": "channel_message",
-            "status": completion_status,
-            "conversation_status": updated_conversation.get("status"),
-            "source_channel": source_channel,
-            "channel_dispatch": dispatch_result,
-            "crm_writeback": crm_writeback,
-            "owner_notification": owner_notification,
-            "decision": {
-                "conversation_status": decision.get("conversation_status"),
-                "stored_conversation_status": stored_conversation_status,
-                "fit": decision.get("fit"),
-                "urgency": decision.get("urgency"),
-                "score": decision.get("score"),
-                "owner_escalation_required": owner_escalation_required,
-                "owner_already_escalated": owner_already_escalated,
-                "owner_notification_sent": should_notify_owner,
-            },
-        }
     except Exception as exc:
         logger.error(
             "channel_job_failed lead_id=%s job_id=%s error=%s",
@@ -458,6 +272,253 @@ def process_channel_message_job(job: dict[str, Any]) -> dict[str, Any]:
             "error": str(exc),
             "queue": failure,
         }
+
+
+def _handle_handoff_pending_channel_job(
+    *,
+    job_id: int,
+    lead_id: str,
+    source_channel: str,
+    channel_user_id: str,
+    context: dict[str, Any],
+) -> dict[str, Any]:
+    reply_text = _handoff_pending_reply()
+    append_channel_message(
+        conversation_id=int(context["id"]),
+        role="assistant",
+        content=reply_text,
+    )
+    dispatch_result = dispatch_lead_response(
+        source_channel=source_channel,
+        channel_user_id=channel_user_id,
+        subject="",
+        body=reply_text,
+    )
+    if dispatch_result.get("ok") is False:
+        raise RuntimeError(f"Channel holding reply dispatch failed: {dispatch_result}")
+
+    mark_lead_job_completed(job_id, "handoff_pending_replied", first_response=True)
+    return {
+        "job_id": job_id,
+        "lead_id": lead_id,
+        "job_type": "channel_message",
+        "status": "handoff_pending_replied",
+        "conversation_status": context.get("status"),
+        "source_channel": source_channel,
+        "channel_dispatch": dispatch_result,
+        "owner_notification": None,
+        "decision": {
+            "reason": "Lead is already in owner handoff state; no LLM call made.",
+        },
+    }
+
+
+def _handle_terminal_channel_job(
+    *,
+    job_id: int,
+    lead_id: str,
+    source_channel: str,
+    context: dict[str, Any],
+) -> dict[str, Any]:
+    mark_lead_job_completed(job_id, "conversation_already_closed", first_response=False)
+    return {
+        "job_id": job_id,
+        "lead_id": lead_id,
+        "job_type": "channel_message",
+        "status": "conversation_already_closed",
+        "conversation_status": context.get("status"),
+        "source_channel": source_channel,
+        "channel_dispatch": None,
+        "owner_notification": None,
+        "decision": {
+            "reason": "Conversation is already terminal; no LLM call made.",
+        },
+    }
+
+
+def _handle_customer_closed_channel_job(
+    *,
+    job_id: int,
+    lead_id: str,
+    source_channel: str,
+    channel_user_id: str,
+    context: dict[str, Any],
+    owner_already_escalated: bool,
+) -> dict[str, Any]:
+    final_reply = _closing_reply(owner_already_escalated=owner_already_escalated)
+    append_channel_message(
+        conversation_id=int(context["id"]),
+        role="assistant",
+        content=final_reply,
+    )
+    dispatch_result = dispatch_lead_response(
+        source_channel=source_channel,
+        channel_user_id=channel_user_id,
+        subject="",
+        body=final_reply,
+    )
+    if dispatch_result.get("ok") is False:
+        raise RuntimeError(f"Channel closing reply dispatch failed: {dispatch_result}")
+
+    updated_conversation = update_conversation_state(
+        conversation_id=int(context["id"]),
+        extracted_profile=dict(context.get("extracted_profile") or {}),
+        status="customer_closed",
+        owner_escalated=False,
+    )
+    mark_lead_job_completed(job_id, "customer_closed", first_response=True)
+    return {
+        "job_id": job_id,
+        "lead_id": lead_id,
+        "job_type": "channel_message",
+        "status": "customer_closed",
+        "conversation_status": updated_conversation.get("status"),
+        "source_channel": source_channel,
+        "channel_dispatch": dispatch_result,
+        "owner_notification": None,
+        "decision": {
+            "reason": "Customer sent a clear closing message; no LLM call made.",
+            "owner_already_escalated": owner_already_escalated,
+        },
+    }
+
+
+def _handle_active_channel_job(
+    *,
+    job_id: int,
+    lead_id: str,
+    payload: dict[str, Any],
+    source_channel: str,
+    channel_user_id: str,
+    context: dict[str, Any],
+    owner_already_escalated: bool,
+) -> dict[str, Any]:
+    sender_name = str(payload.get("sender_name") or "")
+    customer_text = str(payload.get("text") or "")
+    agent_context = {
+        "lead_id": lead_id,
+        "source_channel": source_channel,
+        "channel_user_id": channel_user_id,
+        "sender_name": sender_name,
+        "conversation_status": context.get("status"),
+        "owner_already_escalated": owner_already_escalated,
+        "last_owner_escalated_at": str(context.get("last_owner_escalated_at") or ""),
+        "existing_extracted_profile": _compact_profile(
+            context.get("extracted_profile") or {}
+        ),
+        "recent_messages": _message_context(context.get("messages", [])),
+        "agency_profile": _channel_agency_profile_context(
+            json.loads(get_agency_profile.invoke({}))
+        ),
+        "owner_config": get_owner_config(),
+    }
+    decision_model = _channel_chat_agent().invoke(
+        {"input": json.dumps(agent_context, ensure_ascii=False)}
+    )
+    decision = decision_model.model_dump()
+    raw_conversation_status = str(
+        decision.get("conversation_status") or "continue_conversation"
+    )
+    stored_conversation_status = _stored_conversation_status(decision)
+    reply_text = _reply_text_for_decision(decision)
+
+    append_channel_message(
+        conversation_id=int(context["id"]),
+        role="assistant",
+        content=reply_text,
+    )
+    dispatch_result = dispatch_lead_response(
+        source_channel=source_channel,
+        channel_user_id=channel_user_id,
+        subject="",
+        body=reply_text,
+    )
+    if dispatch_result.get("ok") is False:
+        raise RuntimeError(f"Channel reply dispatch failed: {dispatch_result}")
+
+    owner_escalation_required = bool(decision.get("owner_escalation_required"))
+    should_notify_owner = _should_notify_owner(
+        owner_escalation_required=owner_escalation_required,
+        owner_already_escalated=owner_already_escalated,
+    )
+    updated_conversation = update_conversation_state(
+        conversation_id=int(context["id"]),
+        extracted_profile=dict(decision.get("extracted_profile") or {}),
+        status=stored_conversation_status,
+        owner_escalated=should_notify_owner,
+    )
+
+    crm_writeback = write_channel_lead_snapshot(
+        lead_id=lead_id,
+        source_channel=source_channel,
+        channel_user_id=channel_user_id,
+        sender_name=sender_name,
+        extracted_profile=dict(decision.get("extracted_profile") or {}),
+        latest_customer_message=customer_text,
+        owner_summary=str(decision.get("owner_summary") or ""),
+        qualification_summary=str(decision.get("qualification_summary") or ""),
+        status=_airtable_status_for_channel(
+            raw_conversation_status=raw_conversation_status,
+            stored_conversation_status=stored_conversation_status,
+        ),
+    )
+
+    owner_notification = None
+    if should_notify_owner:
+        owner_notification = send_owner_channel_escalation(
+            lead_id=lead_id,
+            source_channel=source_channel,
+            sender_name=sender_name,
+            channel_user_id=channel_user_id,
+            owner_summary=str(decision.get("owner_summary") or ""),
+            qualification_summary=str(decision.get("qualification_summary") or ""),
+            fit=str(decision.get("fit") or ""),
+            urgency=str(decision.get("urgency") or ""),
+            score=decision.get("score", ""),
+            extracted_profile=dict(decision.get("extracted_profile") or {}),
+            transcript=_message_context(context.get("messages", []))
+            + [
+                {
+                    "role": "assistant",
+                    "content": _trim_text(reply_text, CHANNEL_MESSAGE_MAX_CHARS),
+                }
+            ],
+        )
+        if not _notification_delivered(owner_notification):
+            raise RuntimeError(
+                "Owner escalation required, but Telegram notification failed: "
+                f"{owner_notification}"
+            )
+
+    completion_status = _channel_completion_status(
+        decision,
+        owner_escalation_required=owner_escalation_required,
+        owner_already_escalated=owner_already_escalated,
+        owner_notification_sent=should_notify_owner,
+    )
+    mark_lead_job_completed(job_id, completion_status, first_response=True)
+
+    return {
+        "job_id": job_id,
+        "lead_id": lead_id,
+        "job_type": "channel_message",
+        "status": completion_status,
+        "conversation_status": updated_conversation.get("status"),
+        "source_channel": source_channel,
+        "channel_dispatch": dispatch_result,
+        "crm_writeback": crm_writeback,
+        "owner_notification": owner_notification,
+        "decision": {
+            "conversation_status": decision.get("conversation_status"),
+            "stored_conversation_status": stored_conversation_status,
+            "fit": decision.get("fit"),
+            "urgency": decision.get("urgency"),
+            "score": decision.get("score"),
+            "owner_escalation_required": owner_escalation_required,
+            "owner_already_escalated": owner_already_escalated,
+            "owner_notification_sent": should_notify_owner,
+        },
+    }
 
 
 def run_worker(poll_interval: float) -> None:
@@ -848,6 +909,34 @@ def _automation_roi_thresholds() -> dict[str, int]:
     }
 
 
+def _channel_agency_profile_context(profile: dict[str, Any]) -> dict[str, Any]:
+    icp = dict(profile.get("ideal_customer_profile") or {})
+    return {
+        "agency_name": profile.get("agency_name", ""),
+        "services": profile.get("services", []),
+        "required_fields_for_sales_call": profile.get(
+            "required_fields_for_sales_call",
+            [],
+        ),
+        "qualification_rules": {
+            "business_type": icp.get("business_type", []),
+            "monthly_ai_automation_budget_usd": icp.get(
+                "monthly_ai_automation_budget_usd"
+            ),
+            "min_monthly_revenue_for_automation": icp.get(
+                "min_monthly_revenue_for_automation"
+            ),
+            "min_monthly_lead_volume_for_automation": icp.get(
+                "min_monthly_lead_volume_for_automation"
+            ),
+            "preferred_timeline_for_automation": icp.get(
+                "preferred_timeline_for_automation"
+            ),
+            "bad_fit_signals": icp.get("bad_fit_signals", []),
+        },
+    }
+
+
 def _extract_number(value: Any) -> int | None:
     if value is None:
         return None
@@ -912,7 +1001,7 @@ def _owner_summary_from_policy(
 ) -> str:
     policy = decision.get("send_policy") or "unknown"
     reason = decision.get("send_policy_reason") or "No policy reason was saved."
-    base = _owner_summary_from_run(run_fields)
+    base = owner_summary_from_run(run_fields)
 
     if completion_status == "auto_sent":
         return (

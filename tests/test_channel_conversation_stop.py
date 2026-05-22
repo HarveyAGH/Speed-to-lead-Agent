@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from worker import (
     _channel_completion_status,
+    _channel_agency_profile_context,
     _compact_profile,
     _conversation_is_handoff_pending,
     _conversation_is_terminal,
@@ -169,3 +172,39 @@ def test_compact_profile_caps_accumulated_profile_context(monkeypatch):
 
     assert len(str(compact)) < len(str(profile))
     assert compact.get("_truncated") is True or compact["long_notes"].endswith("[truncated]")
+
+
+def test_channel_agency_profile_context_keeps_only_channel_qualification_rules():
+    profile = {
+        "agency_name": "Northstar Growth Studio",
+        "services": ["AI Automation", "Paid ads"],
+        "ideal_customer_profile": {
+            "business_type": ["local service business"],
+            "monthly_ad_budget_minimum_usd": 3000,
+            "monthly_ai_automation_budget_usd": 1000,
+            "min_monthly_revenue_for_automation": 1000,
+            "min_monthly_lead_volume_for_automation": 10,
+            "preferred_timeline_for_automation": "within 5 days",
+            "bad_fit_signals": ["vendor pitch"],
+        },
+        "owner": {"reply_from": "alex@example.test"},
+        "crm_statuses": ["new_high_fit"],
+        "required_fields_for_sales_call": ["service_interest", "budget"],
+    }
+
+    compact = _channel_agency_profile_context(profile)
+
+    assert compact["agency_name"] == "Northstar Growth Studio"
+    assert compact["qualification_rules"]["min_monthly_lead_volume_for_automation"] == 10
+    assert "monthly_ad_budget_minimum_usd" not in compact["qualification_rules"]
+    assert "owner" not in compact
+    assert "crm_statuses" not in compact
+
+
+def test_channel_message_job_is_routed_to_focused_handlers():
+    source = Path("worker.py").read_text(encoding="utf-8")
+
+    assert "def _handle_handoff_pending_channel_job" in source
+    assert "def _handle_terminal_channel_job" in source
+    assert "def _handle_customer_closed_channel_job" in source
+    assert "def _handle_active_channel_job" in source

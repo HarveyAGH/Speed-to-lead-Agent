@@ -7,7 +7,7 @@ from typing import Any
 import psycopg
 from psycopg.rows import dict_row
 
-from config import POSTGRES_DB_URI, STALE_JOB_MINUTES
+from config import POSTGRES_CONNECT_TIMEOUT_SECONDS, POSTGRES_DB_URI, STALE_JOB_MINUTES
 
 
 STALE_RUNNING_MINUTES = STALE_JOB_MINUTES
@@ -352,10 +352,16 @@ def recover_stale_running_jobs(
         rows = conn.execute(
             """
             UPDATE lead_jobs
-            SET status = 'pending',
-                last_error = 'recovered_from_stale_running',
+            SET status = CASE
+                    WHEN status = 'approval_processing' THEN 'waiting_approval'
+                    ELSE 'pending'
+                END,
+                last_error = CASE
+                    WHEN status = 'approval_processing' THEN 'recovered_from_stale_approval_processing'
+                    ELSE 'recovered_from_stale_running'
+                END,
                 updated_at = now()
-            WHERE status = 'running'
+            WHERE status IN ('running', 'approval_processing')
               AND updated_at < now() - (%s * interval '1 minute')
               AND attempts < max_attempts
             RETURNING id, lead_id, status, attempts, last_error;
@@ -375,6 +381,7 @@ def mark_lead_job_failed(job_id: int, error: str) -> dict[str, Any]:
             """
             UPDATE lead_jobs
             SET status = CASE
+                    WHEN status = 'approval_processing' AND attempts < max_attempts THEN 'waiting_approval'
                     WHEN attempts >= max_attempts THEN 'failed'
                     ELSE 'pending'
                 END,
@@ -454,4 +461,9 @@ def get_job_payload_by_lead_id(lead_id: str) -> dict[str, Any]:
 def _connect():
     if not POSTGRES_DB_URI:
         raise RuntimeError("POSTGRES_DB_URI is required for the lead job queue.")
-    return psycopg.connect(POSTGRES_DB_URI, autocommit=True, row_factory=dict_row)
+    return psycopg.connect(
+        POSTGRES_DB_URI,
+        autocommit=True,
+        row_factory=dict_row,
+        connect_timeout=POSTGRES_CONNECT_TIMEOUT_SECONDS,
+    )

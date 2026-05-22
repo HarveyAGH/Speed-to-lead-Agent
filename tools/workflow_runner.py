@@ -46,10 +46,6 @@ def graph_interrupt_summary(exc: GraphInterrupt) -> str:
     )
 
 
-def run_approval_workflow(lead_id: str) -> str:
-    return run_approval_workflow_status(lead_id)["summary"]
-
-
 def run_approval_workflow_status(lead_id: str) -> dict[str, Any]:
     from graph import graph
 
@@ -132,8 +128,3 @@ def build_trace_config(
         "tags": tags,
         "metadata": base_metadata,
     }
-
-
-_latest_agent_run_fields = latest_agent_run_fields
-_owner_summary_from_run = owner_summary_from_run
-_graph_interrupt_summary = graph_interrupt_summary

@@ -33,10 +33,12 @@ def _create_checkpointer():
     if not POSTGRES_DB_URI:
         return InMemorySaver()
 
-    checkpointer = _exit_stack.enter_context(
-        PostgresSaver.from_conn_string(POSTGRES_DB_URI)
-    )
-    checkpointer.setup()
+    with ExitStack() as setup_stack:
+        checkpointer = setup_stack.enter_context(
+            PostgresSaver.from_conn_string(POSTGRES_DB_URI)
+        )
+        checkpointer.setup()
+        _exit_stack.enter_context(setup_stack.pop_all())
     return checkpointer
 
 

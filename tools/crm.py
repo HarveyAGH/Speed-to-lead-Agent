@@ -2,18 +2,11 @@ from __future__ import annotations
 
 import json
 
-from langchain.tools import tool
-
 from tools.airtable_client import airtable_is_configured, create_agent_run
 from tools.io_helpers import new_run_id, now_iso, output_run_dir, write_json, write_text
 from tools.decision_normalizer import normalize_decision
 
-@tool(
-    "save_run_artifacts",
-    description=(
-        "Save visible demo artifacts: decision.json, draft_message.txt, and evidence.json."
-    ),
-)
+
 def save_run_artifacts(
     lead_id: str,
     decision_json: str,

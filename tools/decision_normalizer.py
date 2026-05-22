@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-#The classifications that gets assigned to leads and saved to data
+# Lead classifications saved to CRM and run artifacts.
 VALID_CLASSIFICATIONS = {
     "high_intent_sales_call",
     "needs_clarification",
@@ -10,20 +10,13 @@ VALID_CLASSIFICATIONS = {
     "spam_or_vendor",
 }
 
-# Severity of the lead
-#low - The lead is irrelevant
-#medium -  The lead is not as strong
-#high - Perfect lead
+# Fit level summarizes how closely the lead matches the target buyer profile.
 VALID_FITS = {"high", "medium", "low"}
 
-# Urgency of when the customer wants the finished product
-#same_day - Immedieate need of service.
-#this_week - the need of product/service to be reached by this week
-#low - Not that urgent
-#@> Audit-low: I sense an inconsistency towards the 3 strings being the only things dependent on urgency, if this were to be a text-based response then 9 times out of 10 the lead wouldn't mention anything about urgencies, but this is different as compared to using forms considering the clients have a urgency field they're required to write which gives us the benefit of the information, Amazing for use cases regarding Clinic (i want to come take an appointment) in which we'd have to modify the urgency keyword to be "Scheduled Date" on the form, therefore making `scheduled Data` mask as `VALID_URGENCIES`. enabling the idea of a custom-made lead to speed agent across many industries such as clinic, marketing, and law firms. but this is nevertheless a low-informative severity since we are depending on 3 keywords rather than the actual date given by the clients, giving an owner a hardtime when it coems to actual details.
+# Urgency level maps free-text timelines into stable routing choices.
 VALID_URGENCIES = {"same_day", "this_week", "low"}
 
-# Kinda dont understand the objective here
+# Recommended business action for the owner or automated first response.
 VALID_NEXT_ACTIONS = {
     "book_discovery_call",
     "ask_missing_info",
@@ -32,10 +25,10 @@ VALID_NEXT_ACTIONS = {
     "disqualify",
 }
 
-#The send policies to be chosen depending on the lead, auto-send for non high leads, approval_required for important high leads, "do not send" for rejected ones
+# Send policy controls whether the worker sends, asks for approval, or suppresses.
 VALID_SEND_POLICIES = {"auto_send", "approval_required", "do_not_send"}
 
-#Kinda dont understand the objective here
+# Response type describes the customer-facing message category for audit/CRM.
 VALID_RESPONSE_TYPES = {
     "acknowledgment",
     "qualification_questions",
@@ -43,9 +36,10 @@ VALID_RESPONSE_TYPES = {
     "disqualification",
     "none",
 }
-# Alert levels
+# Owner alert priority for Telegram notifications.
 VALID_OWNER_ALERT_LEVELS = {"urgent", "normal", "none"}
-# Lead Temperatures 
+
+# Sales temperature used for quick owner scanning.
 VALID_LEAD_TEMPERATURES = {"hot", "warm", "cold", "spam"}
 
 

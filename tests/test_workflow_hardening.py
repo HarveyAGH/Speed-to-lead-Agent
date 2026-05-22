@@ -7,7 +7,10 @@ import pytest
 from langchain_core.messages import AIMessage
 
 import tools.crm as crm
+import tools.channel_conversations as channel_conversations
 import tools.io_helpers as io_helpers
+import tools.inbound_events as inbound_events
+import tools.job_queue as job_queue
 from tools.crm import save_run_artifacts
 from workflow_nodes import (
     _draft_summary,
@@ -34,32 +37,30 @@ def test_save_run_artifacts_writes_crm_note_in_same_run_folder(monkeypatch, tmp_
     monkeypatch.setattr(crm, "output_run_dir", fake_output_run_dir)
     monkeypatch.setattr(crm, "airtable_is_configured", lambda: False)
 
-    raw = save_run_artifacts.invoke(
-        {
-            "lead_id": "lead_test",
-            "decision_json": json.dumps(
-                {
-                    "lead_id": "lead_test",
-                    "classification": "needs_clarification",
-                    "fit": "medium",
-                    "urgency": "this_week",
-                    "score": 62,
-                    "recommended_next_action": "ask_missing_info",
-                }
-            ),
-            "draft_subject": "Test subject",
-            "draft_body": "Test body",
-            "evidence_json": json.dumps({"signals": ["test"]}),
-            "crm_note_json": json.dumps(
-                {
-                    "lead_id": "lead_test",
-                    "crm_status": "needs_clarification",
-                    "note_path": "",
-                    "summary": "Owner-facing summary.",
-                    "saved_fields": ["lead_id", "crm_status", "summary"],
-                }
-            ),
-        }
+    raw = save_run_artifacts(
+        lead_id="lead_test",
+        decision_json=json.dumps(
+            {
+                "lead_id": "lead_test",
+                "classification": "needs_clarification",
+                "fit": "medium",
+                "urgency": "this_week",
+                "score": 62,
+                "recommended_next_action": "ask_missing_info",
+            }
+        ),
+        draft_subject="Test subject",
+        draft_body="Test body",
+        evidence_json=json.dumps({"signals": ["test"]}),
+        crm_note_json=json.dumps(
+            {
+                "lead_id": "lead_test",
+                "crm_status": "needs_clarification",
+                "note_path": "",
+                "summary": "Owner-facing summary.",
+                "saved_fields": ["lead_id", "crm_status", "summary"],
+            }
+        ),
     )
 
     result = json.loads(raw)
@@ -82,23 +83,21 @@ def test_save_run_artifacts_sanitizes_malicious_lead_id(monkeypatch, tmp_path):
     monkeypatch.setattr(io_helpers, "OUTPUT_DIR", tmp_path / "outputs")
     monkeypatch.setattr(crm, "airtable_is_configured", lambda: False)
 
-    raw = save_run_artifacts.invoke(
-        {
-            "lead_id": "../../tmp/evil",
-            "decision_json": json.dumps(
-                {
-                    "lead_id": "../../tmp/evil",
-                    "classification": "needs_clarification",
-                    "fit": "medium",
-                    "urgency": "this_week",
-                    "score": 62,
-                    "recommended_next_action": "ask_missing_info",
-                }
-            ),
-            "draft_subject": "Test subject",
-            "draft_body": "Test body",
-            "evidence_json": json.dumps({"signals": ["test"]}),
-        }
+    raw = save_run_artifacts(
+        lead_id="../../tmp/evil",
+        decision_json=json.dumps(
+            {
+                "lead_id": "../../tmp/evil",
+                "classification": "needs_clarification",
+                "fit": "medium",
+                "urgency": "this_week",
+                "score": 62,
+                "recommended_next_action": "ask_missing_info",
+            }
+        ),
+        draft_subject="Test subject",
+        draft_body="Test body",
+        evidence_json=json.dumps({"signals": ["test"]}),
     )
 
     result = json.loads(raw)
@@ -167,3 +166,59 @@ def test_worker_imports_workflow_runner_instead_of_app():
     assert "from app import" not in source
     assert "import app" not in source
     assert "from tools.workflow_runner import" in source
+    assert "_latest_agent_run_fields" not in source
+    assert "_owner_summary_from_run" not in source
+
+
+def test_workflow_runner_exports_public_helper_names():
+    source = Path("tools/workflow_runner.py").read_text(encoding="utf-8")
+
+    assert "_latest_agent_run_fields =" not in source
+    assert "_owner_summary_from_run =" not in source
+    assert "def latest_agent_run_fields" in source
+    assert "def owner_summary_from_run" in source
+
+
+def test_artifact_and_email_helpers_are_plain_functions():
+    crm_source = Path("tools/crm.py").read_text(encoding="utf-8")
+    email_source = Path("tools/email.py").read_text(encoding="utf-8")
+
+    assert "@tool" not in crm_source
+    assert "send_followup_email" not in email_source
+    assert "send_safe_followup_email" not in email_source
+    assert "def write_sent_email_artifact" in email_source
+
+
+def test_stale_recovery_includes_approval_processing_jobs():
+    source = Path("tools/job_queue.py").read_text(encoding="utf-8")
+
+    assert "approval_processing" in source
+    assert "THEN 'waiting_approval'" in source
+    assert "recovered_from_stale_approval_processing" in source
+
+
+def test_postgres_connectors_use_timeout(monkeypatch):
+    calls = []
+
+    def fake_connect(*args, **kwargs):
+        calls.append(kwargs)
+        raise RuntimeError("stop after capture")
+
+    for module in (job_queue, channel_conversations, inbound_events):
+        monkeypatch.setattr(module, "POSTGRES_DB_URI", "postgresql://example")
+        monkeypatch.setattr(module, "POSTGRES_CONNECT_TIMEOUT_SECONDS", 7)
+        monkeypatch.setattr(module.psycopg, "connect", fake_connect)
+
+        with pytest.raises(RuntimeError, match="stop after capture"):
+            module._connect()
+
+    assert calls
+    assert all(call["connect_timeout"] == 7 for call in calls)
+
+
+def test_checkpointer_uses_temporary_exit_stack_before_global_stack():
+    source = Path("graph.py").read_text(encoding="utf-8")
+
+    assert "with ExitStack() as setup_stack:" in source
+    assert "setup_stack.enter_context" in source
+    assert "_exit_stack.enter_context(setup_stack.pop_all())" in source

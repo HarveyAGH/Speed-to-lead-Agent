@@ -5,3 +5,4 @@ This file is the project-level index of active and completed agent goals. It rec
 | Goal | Status | Parent | Ledger | Updated |
 |---|---|---|---|---|
 | `audit-hardening-prd` | complete | none | `.agent/runs/audit-hardening-prd/` | 2026-05-22T02:32:05Z |
+| `audit-report-followup` | complete | audit-hardening-prd | `.agent/runs/audit-report-followup/` | 2026-05-22T03:05:30Z |

@@ -145,7 +145,7 @@ def test_telegram_webhook_claims_waiting_approval_before_resume(monkeypatch):
             "status": "approval_processing",
         },
     )
-    monkeypatch.setattr(app, "_latest_agent_run_fields", lambda lead_id: {})
+    monkeypatch.setattr(app, "latest_agent_run_fields", lambda lead_id: {})
     monkeypatch.setattr(app, "answer_callback_query", lambda *args, **kwargs: {"ok": True})
     monkeypatch.setattr(app, "remove_approval_buttons", lambda *args, **kwargs: {"ok": True})
     monkeypatch.setattr(app, "edit_approval_message", lambda *args, **kwargs: {"ok": True})
@@ -227,9 +227,55 @@ def test_telegram_webhook_does_not_resume_already_claimed_approval(monkeypatch):
     assert result["reason"] == "approval_job_already_claimed_or_processed"
 
 
+def test_telegram_webhook_releases_claimed_approval_when_resume_fails(monkeypatch):
+    monkeypatch.setattr(app, "TELEGRAM_WEBHOOK_SECRET", "")
+    monkeypatch.setattr(
+        app,
+        "claim_waiting_approval_job",
+        lambda lead_id, decision: {
+            "id": 42,
+            "lead_id": lead_id,
+            "status": "approval_processing",
+        },
+    )
+    monkeypatch.setattr(app, "latest_agent_run_fields", lambda lead_id: {})
+    monkeypatch.setattr(app, "answer_callback_query", lambda *args, **kwargs: {"ok": True})
+    monkeypatch.setattr(app, "remove_approval_buttons", lambda *args, **kwargs: {"ok": True})
+    monkeypatch.setattr(app, "edit_approval_message", lambda *args, **kwargs: {"ok": True})
+
+    def fail_resume(lead_id, decision):
+        raise RuntimeError("graph resume failed")
+
+    monkeypatch.setattr(app, "resume_lead_send", fail_resume)
+
+    failures = []
+
+    def fake_mark_lead_job_failed(job_id, error):
+        failures.append({"job_id": job_id, "error": error})
+        return {"id": job_id, "status": "waiting_approval", "last_error": error}
+
+    monkeypatch.setattr(app, "mark_lead_job_failed", fake_mark_lead_job_failed)
+
+    result = app.telegram_webhook(
+        {
+            "callback_query": {
+                "id": "callback_1",
+                "data": "approve:lead_1",
+                "message": {"message_id": 10, "chat": {"id": 20}},
+            }
+        },
+        x_telegram_bot_api_secret_token=None,
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "approval_resume_failed"
+    assert failures == [{"job_id": 42, "error": "graph resume failed"}]
+    assert result["queue_status_update"]["status"] == "waiting_approval"
+
+
 def test_telegram_webhook_queues_form_approval_background_task(monkeypatch):
     monkeypatch.setattr(app, "TELEGRAM_WEBHOOK_SECRET", "")
-    monkeypatch.setattr(app, "_latest_agent_run_fields", lambda lead_id: {})
+    monkeypatch.setattr(app, "latest_agent_run_fields", lambda lead_id: {})
     monkeypatch.setattr(app, "answer_callback_query", lambda *args, **kwargs: {"ok": True})
     monkeypatch.setattr(app, "remove_approval_buttons", lambda *args, **kwargs: {"ok": True})
     monkeypatch.setattr(app, "edit_approval_message", lambda *args, **kwargs: {"ok": True})
