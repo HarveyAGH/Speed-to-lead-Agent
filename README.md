@@ -134,6 +134,12 @@ python3 -m venv .venv
 python -m pip install -e ".[dev]"
 ```
 
+For a runtime-only install without the local editable package/dev extras:
+
+```bash
+python -m pip install -r requirements.txt
+```
+
 Create `.env` from `.env.example`:
 
 ```bash
@@ -288,19 +294,21 @@ status: new
 
 ## Run
 
-Start the FastAPI webhook server:
+After Postgres is running and `.env` is configured, start the system with these processes.
+
+Terminal 1: start the FastAPI webhook server:
 
 ```bash
-uvicorn app:app --reload --port 8000
+.venv/bin/uvicorn app:app --reload --port 8000
 ```
 
-Start the worker in a second terminal:
+Terminal 2: start the background worker:
 
 ```bash
-python worker.py
+.venv/bin/python worker.py
 ```
 
-Expose it with ngrok:
+Terminal 3: expose FastAPI with ngrok for local webhook testing:
 
 ```bash
 ngrok http 8000
@@ -321,7 +329,7 @@ curl -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook" \
 Optional: start LangGraph Studio for local graph debugging:
 
 ```bash
-langgraph dev
+.venv/bin/langgraph dev
 ```
 
 Graph ID:
@@ -459,17 +467,18 @@ The repo includes the end-to-end webhook path:
 ```text
 POST /webhooks/tally
 -> create Airtable Leads row
--> invoke the approval-gated agent workflow
+-> enqueue a Postgres lead_jobs row
+-> worker runs the approval-gated agent workflow
 -> write Agent_runs row
--> pause before send
+-> auto-send safe replies or pause before risky sends
 -> send Telegram approval request with the saved draft preview
 -> resume from Telegram button click
 ```
 
-Run the API:
+Run the API directly:
 
 ```bash
-uvicorn app:app --reload --port 8000
+.venv/bin/uvicorn app:app --reload --port 8000
 ```
 
 Health check:
@@ -508,7 +517,7 @@ When set, send this header:
 X-Webhook-Secret: some-secret
 ```
 
-The API runs the approval-gated workflow. For local demos it uses `InMemorySaver`, so approval/resume works only while the same FastAPI process is still running. Production should replace this with SQLite or Postgres checkpointing.
+The API and worker use the configured LangGraph checkpointer. Set `POSTGRES_DB_URI` for durable Postgres checkpointing so approval/resume survives FastAPI or worker restarts. If `POSTGRES_DB_URI` is empty, the graph falls back to in-memory checkpointing for local-only experiments.
 
 ## Learning Playbook
 

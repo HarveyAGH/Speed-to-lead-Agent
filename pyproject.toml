@@ -34,5 +34,5 @@ testpaths = ["tests"]
 py-modules = ["app", "config", "graph", "demo_harness", "worker", "state", "workflow_nodes"]
 
 [tool.setuptools.packages.find]
-include = ["agents", "agents.*", "schemas", "schemas.*", "tools", "tools.*"]
+include = ["agents", "agents.*", "channels", "channels.*", "schemas", "schemas.*", "tools", "tools.*"]
 exclude = ["evals", "mock_data", "outputs", "prompts", "tests"]
