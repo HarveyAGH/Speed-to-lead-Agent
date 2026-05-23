@@ -913,12 +913,16 @@ def _channel_agency_profile_context(profile: dict[str, Any]) -> dict[str, Any]:
     icp = dict(profile.get("ideal_customer_profile") or {})
     return {
         "agency_name": profile.get("agency_name", ""),
+        "business_type": profile.get("business_type") or icp.get("business_type", []),
         "services": profile.get("services", []),
+        "urgent_lead_signals": profile.get("urgent_lead_signals", []),
         "required_fields_for_sales_call": profile.get(
             "required_fields_for_sales_call",
             [],
         ),
-        "qualification_rules": {
+        "helpful_fields": profile.get("helpful_fields", []),
+        "safety_rules": profile.get("safety_rules", []),
+        "qualification_rules": profile.get("qualification_rules") or {
             "business_type": icp.get("business_type", []),
             "monthly_ai_automation_budget_usd": icp.get(
                 "monthly_ai_automation_budget_usd"

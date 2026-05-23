@@ -120,6 +120,7 @@ def _send_resend_email(*, to: str, subject: str, body: str) -> dict[str, Any]:
         headers={
             "Authorization": f"Bearer {RESEND_API_KEY}",
             "Content-Type": "application/json",
+            "User-Agent": "speed-to-lead-agent/0.1",
         },
         method="POST",
     )

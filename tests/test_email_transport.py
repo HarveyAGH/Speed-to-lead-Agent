@@ -79,6 +79,7 @@ def test_resend_email_transport_calls_api_and_records_provider_response(
             "headers": {
                 "Authorization": "Bearer resend_test_key",
                 "Content-type": "application/json",
+                "User-agent": "speed-to-lead-agent/0.1",
             },
             "payload": {
                 "from": "Owner <owner@example.com>",
